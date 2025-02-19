@@ -1,0 +1,16 @@
+asyncpg
+authlib
+bcrypt
+celery
+fastapi
+fastapi-mail
+fastapi[standard]
+firebase-admin
+itsdangerous
+motor
+passlib
+pydantic
+pydantic-settings
+pytest
+pyjwt
+sqlmodel
