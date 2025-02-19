@@ -72,4 +72,4 @@ node_modules/
 yarn.lock
 
 # Add any other project-specific files or directories you don't want to track
-# hudddle-project-firebase.json
+hudddle-project-firebase.json
