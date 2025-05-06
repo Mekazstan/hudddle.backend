@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from uuid import UUID
 from typing import Optional
 from datetime import datetime, date
-from src.db.models import LevelCategory, LevelTier
+from db.models import LevelCategory, LevelTier
 
 class UserLevelSchema(BaseModel):
     id: UUID
@@ -21,7 +21,6 @@ class AchievementSchema(BaseModel):
     name: str
     description: Optional[str] = None
     xp_reward: int
-    badge_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -37,22 +36,3 @@ class UserStreakSchema(BaseModel):
     class Config:
         from_attributes = True
         
-        
-class BadgeSchema(BaseModel):
-    id: UUID
-    created_at: datetime
-    updated_at: datetime
-    name: str
-    description: Optional[str] = None
-    image_url: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-        
-        
-class UserBadgeLinkSchema(BaseModel):
-    user_id: UUID
-    badge_id: UUID
-
-    class Config:
-        from_attributes = True

@@ -2,8 +2,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
-from src.db.models import TaskStatus, Workroom, Leaderboard, TaskCollaborator, Task
-from src.tasks.service import calculate_task_points
+from db.models import TaskStatus, Workroom, Leaderboard, TaskCollaborator, Task
+from tasks.service import calculate_task_points
 
 
 async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):

@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from datetime import datetime
 from uuid import UUID
-from src.db.models import FriendRequestStatus
+from db.models import FriendRequestStatus
         
 class FriendRequestSchema(BaseModel):
     id: UUID

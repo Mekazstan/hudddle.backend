@@ -3,34 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date
 from typing import List, Dict, Any
-from src.db.models import Badge, UserBadgeLink, UserLevel, UserStreak, User
-from .schema import BadgeSchema
-from src.db.main import get_session
-from src.auth.dependencies import get_current_user
+from db.models import UserLevel, UserStreak, User
+from db.db_connect import get_session
+from auth.dependencies import get_current_user
 from .service import update_user_levels
 
 
 achievement_router = APIRouter()
-
-
-@achievement_router.get("/badges", response_model=List[BadgeSchema])
-async def get_all_badges(session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(Badge))
-    badges = result.scalars().all()
-    return badges
-
-
-@achievement_router.get("/users/me/badges", response_model=List[BadgeSchema])
-async def get_current_user_badges(
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    result = await session.execute(
-        select(Badge).join(UserBadgeLink).where(UserBadgeLink.user_id == current_user.id)
-    )
-    user_badges = result.scalars().all()
-    return user_badges
-
 
 @achievement_router.get("/users/me/levels", response_model=List[Dict[str, Any]])
 async def get_user_levels(
@@ -80,3 +59,4 @@ async def get_user_streak(
         "highest_streak": user_streak.highest_streak,
         "last_active_date": user_streak.last_active_date,
     }
+    

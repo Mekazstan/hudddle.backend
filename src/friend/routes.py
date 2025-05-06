@@ -5,11 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List
 from uuid import UUID
-from src.db.models import FriendLink, FriendRequest, FriendRequestStatus, User
+from db.models import FriendLink, FriendRequest, FriendRequestStatus, User
 from .schema import FriendRequestSchema
-from src.auth.schema import UserSchema
-from src.auth.dependencies import get_current_user
-from src.db.main import get_session
+from auth.schema import UserSchema
+from auth.dependencies import get_current_user
+from db.db_connect import get_session
 
 friend_router = APIRouter()
 

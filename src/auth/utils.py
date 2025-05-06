@@ -1,24 +1,23 @@
-from itsdangerous import URLSafeTimedSerializer
 from sqlalchemy import select
-from fastapi import WebSocket, status
+from fastapi import WebSocket, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
-from src.config import Config
-from src.db.models import User
+from config import Config
+from db.models import User
 import logging
 import jwt
 import uuid
 from jwt.exceptions import ExpiredSignatureError, DecodeError
+from google.auth.transport import requests
+from google.oauth2 import id_token
+
+request = requests.Request()
 
 
 password_context = CryptContext(
     schemes=["bcrypt"]
-)
-
-serializer = URLSafeTimedSerializer(
-    secret_key=Config.JWT_SECRET_KEY, salt="email-verification"
 )
 
 ACCESS_TOKEN_EXPIRY = 360000
@@ -31,54 +30,91 @@ def generate_password_hash(password: str) -> str:
 def verify_password(password: str, hash: str) -> bool:
     return password_context.verify(password, hash)
 
-def create_access_tokens(user_data: dict, expiry: timedelta = None, refresh: bool= False):
-    payload = {}
-    payload["user"] = user_data
-    payload["exp"] = datetime.now() + (
-            expiry if expiry is not None else timedelta(seconds=ACCESS_TOKEN_EXPIRY)
-        )
-    payload["jti"] = str(uuid.uuid4())
-    payload["refresh"] = refresh
+def create_access_token(user_data: dict, **kwargs):
+    payload = {
+        "user": user_data,
+        "jti": str(uuid.uuid4()),
+        "refresh": kwargs.get("refresh", False)
+    }
     
-    token = jwt.encode(
-        payload= payload,
-        key=Config.JWT_SECRET_KEY,
-        algorithm=Config.JWT_ALGORITHM
-    )
-    return token
+    if "purpose" in kwargs:
+        payload["purpose"] = kwargs["purpose"]
+    
+    if "expires_minutes" in kwargs:
+        payload["exp"] = datetime.utcnow() + timedelta(minutes=kwargs["expires_minutes"])
+    elif "expiry" in kwargs:
+        payload["exp"] = datetime.utcnow() + kwargs["expiry"]
+    else:
+        payload["exp"] = datetime.utcnow() + timedelta(seconds=ACCESS_TOKEN_EXPIRY)
+    
+    return jwt.encode(payload, Config.JWT_SECRET_KEY, algorithm=Config.JWT_ALGORITHM)
 
-def decode_token(token: str) -> dict:
+def decode_access_token(token: str) -> dict:
     try:
-        token_data = jwt.decode(
-            jwt=token,
-            key=Config.JWT_SECRET_KEY,
-            algorithms=[Config.JWT_ALGORITHM]
+        return jwt.decode(
+            token,
+            Config.JWT_SECRET_KEY,
+            algorithms=[Config.JWT_ALGORITHM],
+            options={
+                "require_exp": True,
+                "verify_exp": True
+            }
         )
-        return token_data
     except ExpiredSignatureError:
-        logging.info("Token has expired")
-        return None
+        logging.warning("Token has expired")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired"
+        )
     except DecodeError:
-        logging.info("Invalid token format")
-        return None
-    except jwt.PyJWTError as e:
-        logging.exception(f"Other JWT error: {e}")
-        return None
-    
-def create_url_safe_token(data: dict):
-
-    token = serializer.dumps(data)
-
-    return token
-
-def decode_url_safe_token(token:str):
-    try:
-        token_data = serializer.loads(token)
-
-        return token_data
-    
+        logging.warning("Invalid token format")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
     except Exception as e:
-        logging.error(str(e))
+        logging.error(f"Token verification failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials"
+        )
+
+async def verify_google_token(google_token: str) -> dict:
+    try:
+        id_info = id_token.verify_oauth2_token(
+            google_token,
+            requests.Request(),
+            Config.GOOGLE_CLIENT_ID
+        )
+        if id_info['aud'] != Config.GOOGLE_CLIENT_ID:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google token audience"
+            )
+        if not id_info.get('email_verified', False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Google email not verified"
+            )
+        return {
+            "email": id_info['email'],
+            "name": id_info.get('name', ''),
+            "given_name": id_info.get('given_name', ''),
+            "family_name": id_info.get('family_name', ''),
+            "picture": id_info.get('picture', ''),
+            "sub": id_info['sub']
+        }
+        
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google token"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Google authentication failed: {str(e)}"
+        )
 
 async def get_current_user_websocket(
     websocket: WebSocket,
@@ -125,3 +161,4 @@ async def get_current_user_websocket(
         print(f"Unexpected error: {e}")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return None
+    

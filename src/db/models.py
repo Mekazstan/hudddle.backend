@@ -1,10 +1,12 @@
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, DateTime, Enum, ARRAY, Boolean, Date
-from sqlalchemy.orm import relationship
+from sqlalchemy import (Column, Integer, String, Numeric, ForeignKey, 
+                        DateTime, Enum, ARRAY, Boolean, Date)
+from sqlalchemy.orm import relationship, declarative_base
 import sqlalchemy.dialects.postgresql as pg
 from datetime import datetime, date, time
 from enum import Enum as PyEnum
 from uuid import uuid4
-from .main import Base
+
+Base = declarative_base()
 
 def create_datetime_column():
     return DateTime(timezone=False)
@@ -47,8 +49,7 @@ class FriendLink(Base):
 
     user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     friend_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    
-    
+       
 class WorkroomMemberLink(Base):
     __tablename__ = "workroom_member_links"
     
@@ -74,6 +75,14 @@ class TaskCollaborator(Base):
         foreign_keys=[user_id]
     )
 
+class PasswordResetOTP(Base):
+    __tablename__ = "password_reset_otps"
+    
+    id = Column(Integer, primary_key=True)
+    email = Column(String, nullable=False, index=True)
+    otp = Column(String(4), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class User(Base):
     __tablename__ = "users"
@@ -82,16 +91,15 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    firebase_uid = Column(String, index=True, nullable=True)
+    auth_provider = Column(String, nullable=True)
     username = Column(String, index=True, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     password_hash = Column(String, nullable=False)
-    role = Column(String, default="member", nullable=False)
+    role = Column(String, default="user", nullable=False)
     xp = Column(Integer, default=0, nullable=False)
     level = Column(Integer, default=1, nullable=False)
-    badges = Column(ARRAY(String), default=[])
     avatar_url = Column(String, nullable=True)
     is_verified = Column(Boolean, default=False, nullable=False)
     productivity = Column(Numeric, default=0.0, nullable=False)
@@ -132,7 +140,6 @@ class User(Base):
         primaryjoin="User.id==FriendLink.user_id",
         secondaryjoin="User.id==FriendLink.friend_id",
     )
-    
     
 class FriendRequest(Base):
     __tablename__ = "friend_requests"
@@ -177,7 +184,6 @@ class Workroom(Base):
     leaderboards = relationship("Leaderboard", back_populates="workroom", cascade="all, delete-orphan")
     live_sessions = relationship("WorkroomLiveSession", back_populates="workroom", cascade="all, delete-orphan")
 
-
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -212,7 +218,6 @@ class Achievement(Base):
     name = Column(String, index=True, nullable=False)
     description = Column(String, nullable=True)
     xp_reward = Column(Integer, default=0, nullable=False)
-    badge_url = Column(String, nullable=True)
 
 class Leaderboard(Base):
     __tablename__ = "leaderboards"
@@ -229,32 +234,7 @@ class Leaderboard(Base):
 
     workroom = relationship("Workroom", back_populates="leaderboards")
     user = relationship("User", back_populates="leaderboards")
-
-class DailyChallenge(Base):
-    __tablename__ = "daily_challenges"
-
-    id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    description = Column(String, index=True, nullable=False)
-    points = Column(Integer, default=0, nullable=False)
-
-class UserDailyChallenge(Base):
-    __tablename__ = "user_daily_challenges"
-
-    id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
-    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), nullable=False)
-    daily_challenge_id = Column(pg.UUID(as_uuid=True), ForeignKey("daily_challenges.id", ondelete='CASCADE'), nullable=False)
-    accepted = Column(Boolean, default=False)
-    completed = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    user = relationship("User")
-    daily_challenge = relationship("DailyChallenge")
-    
-    
+       
 class UserStreak(Base):
     __tablename__ = "user_streaks"
 
@@ -266,20 +246,3 @@ class UserStreak(Base):
 
     user = relationship("User", back_populates="streak")
 
-
-class Badge(Base):
-    __tablename__ = "badges"
-
-    id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    name = Column(String, index=True, nullable=False)
-    description = Column(String, nullable=True)
-    image_url = Column(String, nullable=True)
-
-class UserBadgeLink(Base):
-    __tablename__ = "user_badge_links"
-
-    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    badge_id = Column(pg.UUID(as_uuid=True), ForeignKey("badges.id", ondelete='CASCADE'), primary_key=True)

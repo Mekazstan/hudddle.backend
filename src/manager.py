@@ -4,7 +4,7 @@ from fastapi.websockets import WebSocket
 from collections import defaultdict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, exists
-from src.db.models import WorkroomLiveSession, User, WorkroomMemberLink
+from db.models import WorkroomLiveSession, User, WorkroomMemberLink
 from datetime import datetime
 import json
 

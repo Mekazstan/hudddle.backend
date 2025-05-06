@@ -4,12 +4,14 @@ from sqlalchemy import select, and_
 from datetime import datetime, date
 from typing import List
 from uuid import UUID
-from src.db.main import get_session
-from src.achievements.service import check_and_award_badges, update_user_streak
-from .service import calculate_task_points, check_daily_completion, get_friends_working_on_task
+from db.db_connect import get_session
+from achievements.service import update_user_streak
+from .service import (calculate_task_points, check_daily_completion, 
+                      get_friends_working_on_task)
 from .schema import TaskCreate, TaskSchema, TaskUpdate
-from src.db.models import FriendLink, Task, TaskCollaborator, TaskStatus, User, Workroom, WorkroomMemberLink
-from src.auth.dependencies import get_current_user
+from db.models import (FriendLink, Task, TaskCollaborator, TaskStatus, 
+                       User, Workroom, WorkroomMemberLink)
+from auth.dependencies import get_current_user
 
 task_router = APIRouter()
 
@@ -165,8 +167,6 @@ async def update_task(
             current_user.xp += (len(today_tasks.scalars().all()) * 2) + 10
 
         session.add(current_user)
-        # Call check_and_award_badges after updating xp
-        await check_and_award_badges(current_user, session)
         
         # Update User Streak
         await update_user_streak(current_user.id, session)

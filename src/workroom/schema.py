@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional
-from src.db.models import TaskStatus
+from db.models import TaskStatus
 from datetime import datetime
 from uuid import UUID
 

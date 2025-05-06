@@ -2,17 +2,17 @@ from fastapi import Body, APIRouter, HTTPException, Depends, status, Query
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from src.db.main import get_session
+from db.db_connect import get_session
 from .service import update_workroom_leaderboard
 from .schema import WorkroomCreate, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
 from typing import List, Optional, Dict, Any
 from uuid import UUID
-from src.db.models import Workroom, User, Task, Leaderboard, TaskStatus, WorkroomMemberLink, WorkroomLiveSession
-from src.auth.dependencies import get_current_user
-from src.auth.schema import UserSchema
-from src.tasks.schema import TaskSchema
+from db.models import Workroom, User, Task, Leaderboard, TaskStatus, WorkroomMemberLink
+from auth.dependencies import get_current_user
+from auth.schema import UserSchema
+from tasks.schema import TaskSchema
 from datetime import datetime
-from src.manager import WebSocketManager
+from manager import WebSocketManager
 
 manager = WebSocketManager()
 
@@ -225,6 +225,38 @@ async def create_task_in_workroom(
     await session.commit()
     await session.refresh(new_task)
     return new_task
+
+@workroom_router.patch("/{workroom_id}/tasks/{task_id}", response_model=TaskSchema)
+async def add_existing_task_to_workroom(
+    workroom_id: UUID,
+    task_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    workroom = await session.get(Workroom, workroom_id)
+    if not workroom:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workroom not found")
+
+    if workroom.created_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workroom creator can add tasks to this workroom."
+        )
+
+    task = await session.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task.workroom_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task already belongs to a workroom."
+        )
+
+    task.workroom_id = workroom_id
+    await session.commit()
+    await session.refresh(task)
+    return task
 
 # Leaderboard Management (Related to Workrooms)
 

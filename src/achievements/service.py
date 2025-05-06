@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from src.db.models import (LevelCategory, LevelTier, Task, TaskCollaborator, TaskStatus, 
-                           User, Badge, UserBadgeLink, UserLevel, UserStreak)
+from db.models import (LevelCategory, LevelTier, Task, TaskCollaborator, 
+                       TaskStatus, UserLevel, UserStreak)
 from datetime import date, timedelta
 
 
@@ -14,27 +14,6 @@ def determine_level_tier(points: int) -> LevelTier:
         return LevelTier.ADVANCED
     else:
         return LevelTier.EXPERT
-
-
-async def award_badge(user: User, badge: Badge, session: AsyncSession):
-    user_badge = UserBadgeLink(user_id=user.id, badge_id=badge.id)
-    session.add(user_badge)
-    await session.commit()
-    await session.refresh(user_badge)
-
-# This needs a long logic
-async def check_and_award_badges(user: User, session: AsyncSession):
-    # Example: Award a badge for completing 10 tasks
-    completed_tasks_count = await session.execute(select(Task).where(Task.created_by_id == user.id, Task.status == TaskStatus.COMPLETED))
-    completed_tasks_count = len(completed_tasks_count.scalars().all())
-    if completed_tasks_count >= 10:
-        badge = await session.execute(select(Badge).where(Badge.name == "Task Master"))
-        badge = badge.scalar()
-        if badge:
-            # Check if the user already has the badge
-            user_has_badge = await session.execute(select(UserBadgeLink).where(UserBadgeLink.user_id == user.id, UserBadgeLink.badge_id == badge.id))
-            if not user_has_badge.scalar():
-                await award_badge(user, badge, session)
 
 
 async def get_or_create_user_level(category: LevelCategory, user_id, session: AsyncSession) -> UserLevel:
@@ -147,3 +126,4 @@ async def update_user_streak(user_id, session: AsyncSession):
         user_streak.highest_streak = user_streak.current_streak
 
     await session.commit()
+    

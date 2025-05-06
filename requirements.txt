@@ -1,14 +1,12 @@
 asyncpg
-authlib
-alembic
-celery
+boto3
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
 fastapi
 fastapi-mail
 fastapi[standard]
-firebase-admin
 itsdangerous
-motor
-openai
 passlib[bcrypt]
 pydantic
 pydantic-settings
@@ -16,7 +14,5 @@ pytest
 pyjwt
 python-socketio
 websockets
-redis
 sqlalchemy
 uvicorn
-locust

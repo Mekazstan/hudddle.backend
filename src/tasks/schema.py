@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
-from src.db.models import TaskStatus
+from db.models import TaskStatus
 
 class TaskSchema(BaseModel):
     id: UUID

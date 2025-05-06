@@ -7,7 +7,7 @@ class UserSchema(BaseModel):
     id: UUID
     created_at: datetime
     updated_at: datetime
-    firebase_uid: Optional[str] = None
+    auth_provider: Optional[str] = None
     username: Optional[str] = None
     email: str
     first_name: Optional[str] = None
@@ -16,19 +16,19 @@ class UserSchema(BaseModel):
     role: str
     xp: int
     level: int
-    badges: List[str]
     avatar_url: Optional[str] = None
     is_verified: bool
     productivity: float
     average_task_time: float
     user_type: Optional[str] = None
     find_us: Optional[str] = None
-    software_used: Optional[str] = None
+    daily_active_minutes: int
+    teamwork_collaborations: int
+    software_used: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
 
-# User Creation Schema
 class UserCreateModel(BaseModel):
     email: EmailStr = Field(max_length=40, description="Email address of the user")
     password: str = Field(min_length=6, description="Password of the user")
@@ -57,22 +57,31 @@ class UserUpdateModel(BaseModel):
             raise ValueError("Average task time must be non-negative")
         return value
 
-
-# User Login Schema
 class UserLoginModel(BaseModel):
     email: EmailStr = Field(max_length=40, description="Email address of the user")
     password: str = Field(min_length=6, description="Password of the user")
 
-# Email Schema
 class EmailModel(BaseModel):
     addresses: List[EmailStr] = Field(description="List of email addresses to send emails to")
 
-# Password Reset Request Schema
-class PasswordResetRequestModel(BaseModel):
-    email: EmailStr = Field(description="Email address for password reset")
+class GoogleSignIn(BaseModel):
+    google_token: str = Field(..., description="Google's ID token")
 
-# Password Reset Confirmation Schema
+class ForgotPassword(BaseModel):
+    email: EmailStr = Field(..., description="Email address to reset password for")
+
+class PasswordResetOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
 class PasswordResetConfirmModel(BaseModel):
-    new_password: str = Field(min_length=6, description="New password for the user")
-    confirm_new_password: str = Field(min_length=6, description="Confirmation of the new password")
+    new_password: str = Field(..., min_length=6, description="New password for the user")
+    confirm_new_password: str = Field(..., min_length=6, description="Confirmation of the new password")
+
+class Message(BaseModel):
+    detail: str
     
+class AuthToken(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: dict
