@@ -1,5 +1,6 @@
 from typing import Optional
 import boto3
+import botocore
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from fastapi import HTTPException, status, UploadFile
@@ -112,16 +113,22 @@ async def upload_image_to_s3(file: UploadFile) -> Optional[str]:
         # Generate a unique filename to avoid collisions
         file_name = f"{uuid4()}-{file.filename}"
 
-        # Upload the file to S3
-        s3.upload_fileobj(
-            file.file,
-            AWS_STORAGE_BUCKET_NAME,
-            file_name,
-            ExtraArgs={"ACL": "public-read"},
-        )
+        try:
+            # Upload the file to S3
+            s3.upload_fileobj(
+                file.file,
+                AWS_STORAGE_BUCKET_NAME,
+                file_name,
+                ExtraArgs={"ACL": "public-read"},
+            )
+        except botocore.exceptions.ClientError as error:
+            raise error
         # Construct the full URL to the uploaded file
         image_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{file_name}"
         return image_url
     except Exception as e:
         logging.error(f"Error uploading to S3: {e}")
         return None
+    
+    
+    

@@ -1,5 +1,6 @@
 asyncpg
 boto3
+botocore
 google-auth
 google-auth-oauthlib
 google-auth-httplib2

@@ -1,5 +1,5 @@
 from mail import create_message, mail
-from fastapi import (APIRouter, Depends, status, Response, File,
+from fastapi import (APIRouter, Depends, status, Response, File, Form,
                      HTTPException, BackgroundTasks, UploadFile)
 from fastapi.responses import JSONResponse
 from sqlalchemy import insert, delete
@@ -14,13 +14,14 @@ from .schema import (
     UserCreateModel, UserLoginModel, UserUpdateModel, AuthToken,
     PasswordResetConfirmModel, GoogleSignIn, UserSchema
 )
-from .service import UserService
+from .service import UserService, upload_image_to_s3
 from .utils import (generate_password_hash, create_access_token, 
                     verify_google_token, verify_password)
 from .dependencies import (AccessTokenBearer, get_current_user, 
                            RoleChecker, get_current_user_model)
 from config import Config
 import random
+from typing import Optional, List
 from datetime import datetime, timedelta
 
 # Router and service setup
@@ -287,14 +288,47 @@ async def reset_password(
 
 @auth_router.put("/update-profile", response_model=UserSchema)
 async def update_user_profile(
-    update_data: UserUpdateModel,
     user: User = Depends(get_current_user_model),
     _: bool = Depends(role_checker),
     session: AsyncSession = Depends(get_session),
-    profile_image: UploadFile = File(None),
+    profile_image: Optional[UploadFile] = File(None),
+    username: Optional[str] = Form(None),
+    first_name: Optional[str] = Form(None),
+    last_name: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    avatar_url: Optional[str] = Form(None),
+    is_verified: Optional[bool] = Form(None),
+    user_type: Optional[str] = Form(None),
+    find_us: Optional[str] = Form(None),
+    software_used: Optional[List[str]] = Form(None),
+    productivity: Optional[float] = Form(None),
+    average_task_time: Optional[float] = Form(None),
 ):
     try:
-        update_dict = update_data.dict(exclude_unset=True)
+        update_dict = {}
+
+        if username is not None:
+            update_dict["username"] = username
+        if first_name is not None:
+            update_dict["first_name"] = first_name
+        if last_name is not None:
+            update_dict["last_name"] = last_name
+        if email is not None:
+            update_dict["email"] = email
+        if avatar_url is not None:
+            update_dict["avatar_url"] = avatar_url
+        if is_verified is not None:
+            update_dict["is_verified"] = is_verified
+        if user_type is not None:
+            update_dict["user_type"] = user_type
+        if find_us is not None:
+            update_dict["find_us"] = find_us
+        if software_used is not None:
+            update_dict["software_used"] = software_used
+        if productivity is not None:
+            update_dict["productivity"] = productivity
+        if average_task_time is not None:
+            update_dict["average_task_time"] = average_task_time
 
         if profile_image:
             # Upload the image to S3
