@@ -30,11 +30,6 @@
 
 The Huddle Backend provides the API for the Huddle application, a platform designed to enhance productivity and collaboration.  This README serves as a guide for developers looking to understand, set up, and contribute to the backend. The backend is built using FastAPI.
 
-## Project Structure
-
-The project is organized as follows:
-
-backend_venv/      # Virtual environment (not part of the repo)src/             # Source code root├── achievements/ # Achievement-related logic (levels, etc.)├── auth/        # Authentication and authorization├── dashboard/    #  Dashboard functionality├── db/          # Database models and connections├── friend/      # Friend management├── tasks/       # Task management├── workroom/    # Workroom functionality├── init.py  # Initializes the src directory├── config.py    # Project configuration├── mail.py      # Email sending utilities├── main.py      # Main application entry point├── manager.py   # Database migration management (Alembic)├── middleware.py #  Middleware components.env            # Environment configuration file.gitignore       # Specifies intentionally untracked files that Git should ignoredocker-compose.yml # Docker Compose configurationDockerfile       # Docker image definitionREADME.md        # This filerequirements.txt  # Project dependencies
 ## Features
 
 The Huddle Backend provides the following key features:
