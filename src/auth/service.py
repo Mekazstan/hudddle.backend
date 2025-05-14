@@ -119,7 +119,10 @@ async def upload_image_to_s3(file: UploadFile) -> Optional[str]:
                 file.file,
                 AWS_STORAGE_BUCKET_NAME,
                 file_name,
-                ExtraArgs={"ACL": "public-read"},
+                ExtraArgs={
+                    'ContentType': file.content_type,
+                    'ACL': 'public-read'
+                }
             )
         except botocore.exceptions.ClientError as error:
             raise error
@@ -129,6 +132,5 @@ async def upload_image_to_s3(file: UploadFile) -> Optional[str]:
     except Exception as e:
         logging.error(f"Error uploading to S3: {e}")
         return None
-    
     
     

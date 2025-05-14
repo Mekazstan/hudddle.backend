@@ -3,6 +3,7 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     DATABASE_URL: str
+    READ_DATABASE_URL: str
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str
     MAIL_USERNAME: str
@@ -25,6 +26,12 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY : str
     AWS_STORAGE_BUCKET_NAME : str
     AWS_REGION : str
+    GROQ_API_KEY: str
+    DG_API_KEY: str
+    CELERY_BROKER_URL: str
+    CELERY_RESULT_BACKEND: str
+    DOMAIN: str
+    HUDDDLE_LINK: str
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parent.parent / ".env",

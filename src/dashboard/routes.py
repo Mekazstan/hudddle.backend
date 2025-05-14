@@ -87,7 +87,7 @@ async def get_dashboard_data(
         select(UserStreak).where(UserStreak.user_id == user_id)
     )
     user_streak = result_streak.scalars().first()
-    user_data["streaks"] = user_streak.current_streak if user_streak else 0
+    user_data["streaks"] = user_streak.current_streak if user_streak else 1
 
     # Fetch 3 friends
     friends = await _get_user_friends(session, user_id)

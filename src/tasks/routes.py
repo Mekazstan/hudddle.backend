@@ -1,15 +1,14 @@
+import json
 from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from datetime import datetime, date
+from sqlalchemy import select
+from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
 from db.db_connect import get_session
-from achievements.service import update_user_streak
-from .service import (calculate_task_points, check_daily_completion, 
-                      get_friends_working_on_task)
 from .schema import TaskCreate, TaskSchema, TaskUpdate
-from db.models import (FriendLink, Task, TaskCollaborator, TaskStatus, 
+from db.models import (FriendLink, Task, TaskCollaborator,
                        User, Workroom, WorkroomMemberLink)
 from auth.dependencies import get_current_user
 
@@ -83,99 +82,143 @@ async def create_task(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    # Check if workroom_id is provided and exists in the database
-    if task_data.workroom_id:
-        workroom = await session.get(Workroom, task_data.workroom_id)
-        if not workroom:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Workroom with ID {task_data.workroom_id} does not exist."
+    try:
+        # Check if workroom_id is provided and exists in the database
+        if task_data.workroom_id:
+            workroom = await session.get(Workroom, task_data.workroom_id)
+            if not workroom:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Workroom with ID {task_data.workroom_id} does not exist."
+                )
+                
+            # Check if the current user is a member of the workroom
+            is_member = await session.execute(
+                select(WorkroomMemberLink)
+                .where(
+                    WorkroomMemberLink.workroom_id == task_data.workroom_id,
+                    WorkroomMemberLink.user_id == current_user.id
+                )
             )
-            
-        # Check if the current user is a member of the workroom
-        is_member = await session.execute(
-            select(WorkroomMemberLink)
-            .where(
-                WorkroomMemberLink.workroom_id == task_data.workroom_id,
-                WorkroomMemberLink.user_id == current_user.id
-            )
+            if not is_member.scalar():
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not a member of this workroom."
+                )
+
+        # Create new task
+        new_task = Task(
+            title=task_data.title,
+            duration=task_data.duration,
+            is_recurring=task_data.is_recurring,
+            status=task_data.status,
+            category=task_data.category,
+            task_tools=task_data.task_tools,
+            deadline=task_data.deadline,
+            due_by=task_data.due_by,
+            task_point=task_data.task_point,
+            workroom_id=task_data.workroom_id,
+            created_by_id=current_user.id
         )
-        if not is_member.scalar():
-            raise HTTPException(
-                status_code=403,
-                detail="You are not a member of this workroom."
-            )
 
-    # Convert TaskCreate to Task and set created_by_id
-    task_data_dict = task_data.dict()
-    new_task = Task(**task_data_dict)
-    new_task.created_by_id = current_user.id
+        session.add(new_task)
+        await session.flush()
 
-    # Add the task to the session and commit
-    session.add(new_task)
-    await session.commit()
-    await session.refresh(new_task)
+        # Assign users to the task
+        if task_data.assigned_user_ids:
+            for user_id in task_data.assigned_user_ids:
+                user = await session.get(User, user_id)
+                if not user:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"User with ID {user_id} not found."
+                    )
+                new_task.assigned_users.append(user)
 
-    return new_task
+        await session.commit()
+        await session.refresh(new_task)
+
+        return new_task
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON data: {str(e)}"
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=e.errors()
+        )
 
 @task_router.put("/{task_id}", response_model=TaskSchema)
 async def update_task(
     task_id: UUID,
-    task_update: TaskUpdate,
+    task_data: TaskUpdate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    task = await session.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        task = await session.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
 
-    if task.created_by_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this task")
+        if task.created_by_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to update this task")
 
-    if task_update.workroom_id:
-        workroom = await session.get(Workroom, task_update.workroom_id)
-        if not workroom:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Workroom with ID {task_update.workroom_id} does not exist."
-            )
-        if workroom.created_by != current_user.id:
-            raise HTTPException(
-                status_code=403,
-                detail="Not authorized to add tasks to this workroom."
-            )
+        # Check workroom permissions if workroom_id is being updated
+        if task_data.workroom_id is not None:
+            workroom = await session.get(Workroom, task_data.workroom_id)
+            if not workroom:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Workroom with ID {task_data.workroom_id} does not exist."
+                )
+            if workroom.created_by != current_user.id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not authorized to add tasks to this workroom."
+                )
 
-    for key, value in task_update.dict(exclude_unset=True).items():
-        setattr(task, key, value)
+        # Update task fields
+        update_data = task_data.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            if field == 'assigned_user_ids':
+                # Handle user assignments separately
+                continue
+            setattr(task, field, value)
 
-    if task.status == TaskStatus.COMPLETED and task_update.status != TaskStatus.COMPLETED:
-        task.completed_at = datetime.utcnow()
-        points = calculate_task_points(task)
-        current_user.xp += points
+        # Handle assigned users if provided
+        if 'assigned_user_ids' in update_data:
+            task.assigned_users.clear()
+            if update_data['assigned_user_ids']:
+                users = await session.execute(
+                    select(User).where(User.id.in_(update_data['assigned_user_ids'])))
+                users = users.scalars().all()
+                if len(users) != len(update_data['assigned_user_ids']):
+                    missing = set(update_data['assigned_user_ids']) - {str(u.id) for u in users}
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Users not found: {', '.join(missing)}"
+                    )
+                task.assigned_users.extend(users)
 
-        # Friend Invitation Points
-        friends_working = await get_friends_working_on_task(task_id, current_user.id, session)
-        for friend_id in friends_working:
-            friend = await session.get(User, friend_id)
-            if friend:
-                friend.xp += 5
-                session.add(friend)
+        task.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        await session.refresh(task)
 
-        # Daily Task Completion Bonus
-        if await check_daily_completion(current_user.id, session):
-            today_tasks = await session.execute(select(Task).where(Task.created_by_id == current_user.id, and_(Task.created_at >= datetime.combine(date.today(), datetime.min.time()), Task.created_at <= datetime.combine(date.today(), datetime.max.time()), Task.status == TaskStatus.COMPLETED)))
-            current_user.xp += (len(today_tasks.scalars().all()) * 2) + 10
+        return task
 
-        session.add(current_user)
-        
-        # Update User Streak
-        await update_user_streak(current_user.id, session)
-
-    await session.commit()
-    await session.refresh(task)
-    await session.refresh(current_user)
-
-    return task
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON data: {str(e)}"
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=e.errors()
+        )
 
 @task_router.delete("/{task_id}")
 async def delete_task(task_id: UUID, session: AsyncSession = Depends(get_session), current_user: User = Depends(get_current_user)):

@@ -9,10 +9,11 @@ DATABASE_URL=Config.DATABASE_URL
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    future=True,
-    pool_size=20,
-    max_overflow=20,
-    pool_timeout=60
+    pool_size=30,
+    max_overflow=100,
+    pool_timeout=30,
+    pool_pre_ping=True,
+    pool_recycle=3600
 )
 
 async_session = sessionmaker(

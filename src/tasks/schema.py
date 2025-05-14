@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from db.models import TaskStatus
 
@@ -20,6 +20,7 @@ class TaskSchema(BaseModel):
     completed_at: Optional[datetime] = None
     created_by_id: UUID
     workroom_id: Optional[UUID] = None
+    assigned_user_ids: Optional[List[UUID]] = []
 
     class Config:
         from_attributes = True
@@ -44,16 +45,85 @@ class TaskCreate(BaseModel):
     workroom_id: Optional[UUID] = None
     category: Optional[str] = None
     task_tools: Optional[List[str]] = None
+    assigned_user_ids: Optional[List[UUID]] = []
+    
+    @validator('deadline', 'due_by', pre=True)
+    def parse_datetime(cls, v):
+        if v is None:
+            return None
+            
+        if isinstance(v, str):
+            try:
+                # Parse string to datetime
+                dt = datetime.fromisoformat(v)
+                # Ensure timezone is set
+                if dt.tzinfo is None:
+                    return dt.replace(tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                raise ValueError("Invalid datetime format. Use ISO format (e.g., '2025-05-12T12:00:00+00:00')")
+                
+        elif isinstance(v, datetime):
+            if v.tzinfo is None:
+                return v.replace(tzinfo=timezone.utc)
+            return v
+            
+        raise ValueError("Expected datetime or ISO format string")
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
     
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, description="Title of the task")
-    duration: Optional[str] = None   
+    duration: Optional[str] = None
     status: Optional[TaskStatus] = None
     is_recurring: Optional[bool] = None
     deadline: Optional[datetime] = None
     due_by: Optional[datetime] = None
-    task_point: Optional[int] = None
+    task_point: Optional[int] = Field(None, ge=1, description="Points must be positive")
     workroom_id: Optional[UUID] = None
     category: Optional[str] = None
     task_tools: Optional[List[str]] = None
-    
+    assigned_user_ids: Optional[List[UUID]] = None
+
+    @validator('deadline', 'due_by', pre=True)
+    def parse_datetime(cls, v):
+        if v is None:
+            return None
+            
+        if isinstance(v, str):
+            try:
+                # Parse string to datetime
+                dt = datetime.fromisoformat(v)
+                # Ensure timezone is set
+                if dt.tzinfo is None:
+                    return dt.replace(tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                raise ValueError("Invalid datetime format. Use ISO format (e.g., '2025-05-12T12:00:00+00:00')")
+                
+        elif isinstance(v, datetime):
+            if v.tzinfo is None:
+                return v.replace(tzinfo=timezone.utc)
+            return v
+            
+        raise ValueError("Expected datetime or ISO format string")
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
+
+class MemberSchema(BaseModel):
+    name: str
+    image_url: Optional[str]
+
+class WorkroomDetailsSchema(BaseModel):
+    id: UUID
+    name: str
+    members: List[MemberSchema]
+    completed_task_count: int
+    pending_task_count: int
+    tasks: List[TaskSchema]

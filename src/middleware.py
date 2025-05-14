@@ -42,6 +42,5 @@ def register_middleware(app: FastAPI):
     # TrustedHost middleware
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["localhost", "127.0.0.1", "hudddle-backend.onrender.com", "localhost:3000", "localhost:8000"],
-        # allowed_hosts=["*"],
+        allowed_hosts=["*"],
     )
