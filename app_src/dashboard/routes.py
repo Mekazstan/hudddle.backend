@@ -10,7 +10,7 @@ import cachetools.func
 
 dashboard_router = APIRouter()
 
-@cachetools.func.ttl_cache(maxsize=128, ttl=300)  # Cache for 5 minutes
+@cachetools.func.ttl_cache(maxsize=128, ttl=300)  # Cache for 5 mins
 async def _get_user_friends(session: AsyncSession, user_id: str):
     """
     Fetches and caches a user's friends for 5 minutes.
@@ -27,16 +27,16 @@ async def _get_user_friends(session: AsyncSession, user_id: str):
     ]
     return friends
 
-@cachetools.func.ttl_cache(maxsize=128, ttl=3600)  # Cache for 1 hour
 async def _get_user_levels(session: AsyncSession, user_id: str):
-    """
-    Fetches and caches user levels for 1 hour.
-    """
     result_levels = await session.execute(
         select(UserLevel).where(UserLevel.user_id == user_id)
     )
     levels = [
-        {"category": level.level_category, "tier": level.level_tier}
+        {
+            "category": level.level_category,
+            "tier": level.level_tier,
+            "points": level.level_points
+        }
         for level in result_levels.scalars().all()
     ]
     return levels

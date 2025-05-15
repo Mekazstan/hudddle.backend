@@ -4,7 +4,7 @@ import botocore
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from fastapi import HTTPException, status, UploadFile
-from db.models import User
+from db.models import LevelCategory, LevelTier, User, UserLevel
 from uuid import UUID, uuid4
 from .schema import UserCreateModel
 from .utils import generate_password_hash
@@ -61,6 +61,19 @@ class UserService:
         except Exception as e:
             logging.error(f"Error creating user: {str(e)}")
             raise
+        
+    async def create_level_for_user(self, user_id: UUID, session: AsyncSession):
+        # Create a UserLevel entry for each LevelCategory
+        levels = [
+            UserLevel(
+                user_id=user_id,
+                level_category=category,
+                level_tier=LevelTier.BEGINNER,
+                level_points=0
+            )
+            for category in LevelCategory
+        ]
+        session.add_all(levels)
 
     async def update_user(self, user: User, user_data: dict, session: AsyncSession):
         try:

@@ -53,6 +53,7 @@ async def create_user_account(
             )
         
         new_user = await user_service.create_user(user_data, session)
+        await user_service.create_level_for_user(new_user.id, session)
         await session.commit()
         return {"detail": "New user account created! Welcome to Hudddle IO. "}
         
