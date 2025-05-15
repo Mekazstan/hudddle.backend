@@ -46,18 +46,25 @@ async def create_user_account(
         email = user_data.email
         user_exists = await user_service.user_exists(email, session)
         if user_exists:
+            # Explicitly commit before raising error to clean up transaction
+            await session.commit()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"User with email {email} already exists.",
             )
+        
         new_user = await user_service.create_user(user_data, session)
+        await session.commit()
         return {"detail": "New user account created! Welcome to Hudddle IO. "}
+        
     except HTTPException as e:
+        await session.rollback()
         raise e
     except Exception as e:
         await session.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Failed to create user account"
         )
 
 @auth_router.post("/login", status_code=status.HTTP_200_OK)
