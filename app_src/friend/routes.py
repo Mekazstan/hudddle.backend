@@ -10,45 +10,53 @@ from .schema import FriendRequestSchema
 from auth.schema import UserSchema
 from auth.dependencies import get_current_user
 from db.db_connect import get_session
+from auth.service import UserService
 
+
+user_service = UserService() 
 friend_router = APIRouter()
 
 # Friend Endpoints
 
-@friend_router.post("/friends/request", response_model=FriendRequestSchema)
+@friend_router.post("/friends/request")
 async def send_friend_request(
-    receiver_id: UUID,
+    request_data: FriendRequestSchema,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    # Prevent sending friend request to oneself
-    if current_user.id == receiver_id:
+    receiver_email = request_data.receiver_email.lower()
+
+    if current_user.email.lower() == receiver_email:
         raise HTTPException(status_code=400, detail="You cannot send a friend request to yourself.")
     
-    # Check that the receiver exists
-    receiver = await session.get(User, receiver_id)
+    receiver = await user_service.get_user_by_email(receiver_email, session)
     if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
     
-    # Check if a friend request already exists between the users
-    existing_request = await session.query(FriendRequest).filter(
-        ((FriendRequest.sender_id == current_user.id) & (FriendRequest.receiver_id == receiver_id)) |
-        ((FriendRequest.sender_id == receiver_id) & (FriendRequest.receiver_id == current_user.id))
-    ).first()
-    if existing_request:
+    existing_request = await session.execute(
+        select(FriendRequest).where(
+            ((FriendRequest.sender_id == current_user.id) & (FriendRequest.receiver_id == receiver.id)) |
+            ((FriendRequest.sender_id == receiver.id) & (FriendRequest.receiver_id == current_user.id))
+        )
+    )
+    friend_request = existing_request.scalars().first()
+
+    if friend_request:
         raise HTTPException(status_code=409, detail="Friend request already pending or users are already friends.")
 
-    friend_request = FriendRequest(
+    # Create friend request
+    new_request = FriendRequest(
         sender_id=current_user.id,
-        receiver_id=receiver_id,
+        receiver_id=receiver.id,
         status=FriendRequestStatus.pending,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
-    session.add(friend_request)
+    session.add(new_request)
     await session.commit()
-    await session.refresh(friend_request)
-    return friend_request
+    await session.refresh(new_request)
+    return new_request
+
 
 @friend_router.post("/friends/request/{request_id}/accept")
 async def accept_friend_request(

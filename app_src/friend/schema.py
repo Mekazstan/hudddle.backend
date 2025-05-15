@@ -1,18 +1,8 @@
-from pydantic import BaseModel
-from datetime import datetime
+from pydantic import BaseModel, EmailStr
 from uuid import UUID
-from db.models import FriendRequestStatus
         
 class FriendRequestSchema(BaseModel):
-    id: UUID
-    sender_id: UUID
-    receiver_id: UUID
-    status: FriendRequestStatus
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
+    receiver_email: EmailStr
         
 class FriendLinkSchema(BaseModel):
     user_id: UUID
