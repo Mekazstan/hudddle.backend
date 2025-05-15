@@ -46,7 +46,7 @@ async def create_user_account(
         email = user_data.email
         user_exists = await user_service.user_exists(email, session)
         if user_exists:
-            await session.commit()
+            await session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"User with email {email} already exists.",
