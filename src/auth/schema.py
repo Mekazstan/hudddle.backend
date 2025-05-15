@@ -18,6 +18,7 @@ class UserSchema(BaseModel):
     level: int
     avatar_url: Optional[str] = None
     is_verified: bool
+    is_user_onboarded: bool
     productivity: float
     average_task_time: float
     user_type: Optional[str] = None
@@ -38,6 +39,7 @@ class UserUpdateModel(BaseModel):
     last_name: Optional[str] = None
     avatar_url: Optional[str] = None
     is_verified: Optional[bool] = None
+    is_user_onboarded: Optional[bool] = None
     username: Optional[str] = None
     user_type: Optional[str] = None
     find_us: Optional[str] = None

@@ -44,22 +44,23 @@ class UserService:
         return await self.get_user_by_email(email, session) is not None
 
     async def create_user(self, user_data: UserCreateModel, session: AsyncSession):
-        user_data_dict = user_data.model_dump()
-        password = user_data_dict.pop("password")
-        new_user = User(**user_data_dict)
-        new_user.password_hash = generate_password_hash(password)
-        new_user.role = "user"
-        session.add(new_user)
         try:
-            await session.commit()
-            await session.refresh(new_user)
+            user_data_dict = user_data.model_dump()
+            password = user_data_dict.pop("password")
+            new_user = User(**user_data_dict)
+            new_user.password_hash = generate_password_hash(password)
+            new_user.role = "user"
+            session.add(new_user)
+            await session.flush()
+            return new_user
         except IntegrityError as e:
-            await session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"User with email {user_data.email} already exists."
             )
-        return new_user
+        except Exception as e:
+            logging.error(f"Error creating user: {str(e)}")
+            raise
 
     async def update_user(self, user: User, user_data: dict, session: AsyncSession):
         try:

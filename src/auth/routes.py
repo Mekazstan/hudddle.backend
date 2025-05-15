@@ -46,7 +46,6 @@ async def create_user_account(
         email = user_data.email
         user_exists = await user_service.user_exists(email, session)
         if user_exists:
-            # Explicitly commit before raising error to clean up transaction
             await session.commit()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -62,9 +61,10 @@ async def create_user_account(
         raise e
     except Exception as e:
         await session.rollback()
+        logging.error(f"Signup error for {user_data.email}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to create user account"
+            detail=f"Failed to create user account: {str(e)}"
         )
 
 @auth_router.post("/login", status_code=status.HTTP_200_OK)
