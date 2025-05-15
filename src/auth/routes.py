@@ -427,6 +427,7 @@ async def update_user_profile(
     email: Optional[str] = Form(None),
     avatar_url: Optional[str] = Form(None),
     is_verified: Optional[bool] = Form(None),
+    is_user_onboarded: Optional[bool] = Form(None),
     user_type: Optional[str] = Form(None),
     find_us: Optional[str] = Form(None),
     software_used: Optional[List[str]] = Form(None),
@@ -448,6 +449,8 @@ async def update_user_profile(
             update_dict["avatar_url"] = avatar_url
         if is_verified is not None:
             update_dict["is_verified"] = is_verified
+        if is_user_onboarded is not None:
+            update_dict["is_user_onboarded"] = is_user_onboarded
         if user_type is not None:
             update_dict["user_type"] = user_type
         if find_us is not None:

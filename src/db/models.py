@@ -127,6 +127,7 @@ class User(Base):
     last_activity_start = Column(DateTime(timezone=True), nullable=True)
     teamwork_collaborations = Column(Integer, default=0)
     daily_teamwork_collaborations = Column(Integer, default=0)
+    is_user_onboarded = Column(Boolean, default=False, nullable=False)
 
     user_type = Column(String, nullable=True)
     find_us = Column(String, nullable=True)

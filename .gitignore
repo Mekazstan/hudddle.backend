@@ -14,3 +14,5 @@ venv/
 .env
 guides/
 backend_venv/
+hudddle-project-firebase.json
+src/auth/hudddle-project-firebase.json
