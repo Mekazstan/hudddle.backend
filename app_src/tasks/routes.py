@@ -190,17 +190,19 @@ async def update_task(
 
         # Handle assigned users if provided
         if 'assigned_user_ids' in update_data:
-            task.assigned_users.clear()
-            if update_data['assigned_user_ids']:
+            new_user_ids = update_data['assigned_user_ids']
+            if new_user_ids:
                 users = await session.execute(
-                    select(User).where(User.id.in_(update_data['assigned_user_ids'])))
+                    select(User).where(User.id.in_(new_user_ids))
+                )
                 users = users.scalars().all()
-                if len(users) != len(update_data['assigned_user_ids']):
-                    missing = set(update_data['assigned_user_ids']) - {str(u.id) for u in users}
+                if len(users) != len(new_user_ids):
+                    missing = set(map(str, new_user_ids)) - {str(u.id) for u in users}
                     raise HTTPException(
                         status_code=400,
                         detail=f"Users not found: {', '.join(missing)}"
                     )
+                task.assigned_users.clear()
                 task.assigned_users.extend(users)
 
         task.updated_at = datetime.now(timezone.utc)

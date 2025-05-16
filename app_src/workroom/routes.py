@@ -249,18 +249,17 @@ async def update_workroom(
             status_code=403, detail="Not authorized to update this workroom"
         )
 
-    # Update basic workroom data
-    for key, value in workroom_update.dict(exclude_unset=True).items():
-        if key not in ["kpis", "performance_metrics"]:
-            setattr(workroom, key, value)
+    update_data = workroom_update.dict(exclude_unset=True)
+            
+    # Update Name
+    if "name" in update_data:
+        workroom.name = update_data["name"]
 
-    # Update KPI
-    if workroom_update.kpi is not None:
-        workroom.kpis = workroom_update.kpi
+    if "kpis" in update_data:
+        workroom.kpis = update_data["kpis"]
 
-    # Update Performance Metrics
-    if workroom_update.performance_metrics is not None:
-        # Clear existing performance metrics for the workroom
+    if "performance_metrics" in update_data:
+        # Clear existing performance metrics
         await session.execute(
             delete(WorkroomPerformanceMetric).where(
                 WorkroomPerformanceMetric.workroom_id == workroom_id
