@@ -1,4 +1,5 @@
 asyncpg
+alembic
 boto3
 botocore
 celery

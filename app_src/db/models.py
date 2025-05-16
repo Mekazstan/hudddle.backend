@@ -175,6 +175,19 @@ class User(Base):
         primaryjoin="User.id==FriendLink.user_id",
         secondaryjoin="User.id==FriendLink.friend_id",
     )
+    sent_friend_requests = relationship(
+        "FriendRequest",
+        foreign_keys="[FriendRequest.sender_id]",
+        back_populates="sender",
+        cascade="all, delete-orphan"
+    )
+
+    received_friend_requests = relationship(
+        "FriendRequest",
+        foreign_keys="[FriendRequest.receiver_id]",
+        back_populates="receiver",
+        cascade="all, delete-orphan"
+    )
 
 class WorkroomMetric(Base):
     __tablename__ = "workroom_metrics"
@@ -211,6 +224,9 @@ class FriendRequest(Base):
     status = Column(Enum(FriendRequestStatus), default=FriendRequestStatus.pending, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="sent_friend_requests")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="received_friend_requests")
     
 class WorkroomLiveSession(Base):
     __tablename__ = "workroom_live_sessions"

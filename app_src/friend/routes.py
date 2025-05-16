@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 from typing import List
 from uuid import UUID
 from db.models import FriendLink, FriendRequest, FriendRequestStatus, User
-from .schema import FriendRequestSchema
+from .schema import FriendRequestResponseSchema, FriendRequestSchema
 from auth.schema import UserSchema
 from auth.dependencies import get_current_user
 from db.db_connect import get_session
@@ -115,3 +115,29 @@ async def get_friend_by_email(
     if not user:
         raise HTTPException(status_code=404, detail=f"User with email '{email}' not found")
     return user
+
+@friend_router.get("/friends/requests/pending", response_model=List[FriendRequestResponseSchema])
+async def get_pending_friend_requests(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    result = await session.execute(
+        select(FriendRequest)
+        .options(selectinload(FriendRequest.sender))
+        .where(
+            FriendRequest.receiver_id == current_user.id,
+            FriendRequest.status == FriendRequestStatus.pending
+        )
+    )
+    pending_requests = result.scalars().all()
+
+    # Return with sender's email attached
+    return [
+        FriendRequestResponseSchema(
+            id=req.id,
+            sender_id=req.sender_id,
+            sender_email=req.sender.email,
+            status=req.status,
+            created_at=req.created_at
+        ) for req in pending_requests
+    ]
