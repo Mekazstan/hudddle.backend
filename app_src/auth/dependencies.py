@@ -45,6 +45,7 @@ async def get_current_user_model(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    print(f"User: {user}")
     return user
 
 async def get_current_user(

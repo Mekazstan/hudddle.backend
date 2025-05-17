@@ -432,7 +432,6 @@ async def update_user_profile(
     username: Optional[str] = Form(None),
     first_name: Optional[str] = Form(None),
     last_name: Optional[str] = Form(None),
-    email: Optional[str] = Form(None),
     avatar_url: Optional[str] = Form(None),
     is_verified: Optional[bool] = Form(None),
     is_user_onboarded: Optional[bool] = Form(None),
@@ -451,8 +450,6 @@ async def update_user_profile(
             update_dict["first_name"] = first_name
         if last_name is not None:
             update_dict["last_name"] = last_name
-        if email is not None:
-            update_dict["email"] = email
         if avatar_url is not None:
             update_dict["avatar_url"] = avatar_url
         if is_verified is not None:
@@ -480,7 +477,7 @@ async def update_user_profile(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to upload profile image",
                 )
-
+        print(f"Data from user: {update_dict}")
         updated_user = await user_service.update_user(user, update_dict, session)
         return UserSchema.from_orm(updated_user)
     except HTTPException as e:
