@@ -12,7 +12,7 @@ from celery_task import send_email_task
 from .schema import (
     ForgotPassword, Message, PasswordResetOTPRequest,
     UserCreateModel, UserLoginModel, AuthToken,
-    PasswordResetConfirmModel, GoogleSignIn, UserSchema
+    PasswordResetConfirmModel, GoogleSignIn, UserSchema, UserUpdateSchema
 )
 from .service import UserService, upload_image_to_s3
 from .utils import (generate_password_hash, create_access_token, 
@@ -422,71 +422,52 @@ async def reset_password(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
-
-@auth_router.put("/update-profile", response_model=UserSchema)
-async def update_user_profile(
+        
+@auth_router.put("/update-profile-data", response_model=UserSchema)
+async def update_user_data(
+    update_data: UserUpdateSchema,
     user: User = Depends(get_current_user_model),
     _: bool = Depends(role_checker),
-    session: AsyncSession = Depends(get_session),
-    profile_image: Optional[UploadFile] = File(None),
-    username: Optional[str] = Form(None),
-    first_name: Optional[str] = Form(None),
-    last_name: Optional[str] = Form(None),
-    avatar_url: Optional[str] = Form(None),
-    is_verified: Optional[bool] = Form(None),
-    is_user_onboarded: Optional[bool] = Form(None),
-    user_type: Optional[str] = Form(None),
-    find_us: Optional[str] = Form(None),
-    software_used: Optional[List[str]] = Form(None),
-    productivity: Optional[float] = Form(None),
-    average_task_time: Optional[float] = Form(None),
+    session: AsyncSession = Depends(get_session)
 ):
     try:
-        update_dict = {}
-
-        if username is not None:
-            update_dict["username"] = username
-        if first_name is not None:
-            update_dict["first_name"] = first_name
-        if last_name is not None:
-            update_dict["last_name"] = last_name
-        if avatar_url is not None:
-            update_dict["avatar_url"] = avatar_url
-        if is_verified is not None:
-            update_dict["is_verified"] = is_verified
-        if is_user_onboarded is not None:
-            update_dict["is_user_onboarded"] = is_user_onboarded
-        if user_type is not None:
-            update_dict["user_type"] = user_type
-        if find_us is not None:
-            update_dict["find_us"] = find_us
-        if software_used is not None:
-            update_dict["software_used"] = software_used
-        if productivity is not None:
-            update_dict["productivity"] = productivity
-        if average_task_time is not None:
-            update_dict["average_task_time"] = average_task_time
-
-        if profile_image:
-            # Upload the image to S3
-            image_url = await upload_image_to_s3(profile_image)
-            if image_url:
-                update_dict["avatar_url"] = image_url
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to upload profile image",
-                )
-        print(f"Data from user: {update_dict}")
+        update_dict = update_data.dict(exclude_unset=True)
+        logging.info(f"Update profile data received: {update_dict}")
         updated_user = await user_service.update_user(user, update_dict, session)
         return UserSchema.from_orm(updated_user)
     except HTTPException as e:
         raise e
     except Exception as e:
-        logging.error(f"Error updating user profile: {e}")
+        logging.error(f"Error updating user data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+@auth_router.post("/update-profile-image", response_model=UserSchema)
+async def update_profile_image(
+    profile_image: UploadFile,
+    user: User = Depends(get_current_user_model),
+    _: bool = Depends(role_checker),
+    session: AsyncSession = Depends(get_session)
+):
+    try:
+        image_url = await upload_image_to_s3(profile_image)
+        if image_url:
+            update_dict = {"avatar_url": image_url}
+            updated_user = await user_service.update_user(user, update_dict, session)
+            return UserSchema.from_orm(updated_user)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to upload profile image",
+            )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logging.error(f"Error updating profile image: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
         
-               

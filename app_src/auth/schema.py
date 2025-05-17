@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr, validator
+from fastapi import UploadFile
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
@@ -87,3 +88,19 @@ class AuthToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: dict
+
+
+class UserUpdateSchema(BaseModel):
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_user_onboarded: Optional[bool] = None
+    user_type: Optional[str] = None
+    find_us: Optional[str] = None
+    software_used: Optional[List[str]] = None
+    productivity: Optional[float] = None
+    average_task_time: Optional[float] = None
+
+class UserProfileImageUpdate(BaseModel):
+    profile_image: UploadFile
