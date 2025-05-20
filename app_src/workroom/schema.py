@@ -15,7 +15,7 @@ class WorkroomMetricSchema(BaseModel):
 class WorkroomPerformanceMetricSchema(BaseModel):
     kpi_name: str
     metric_value: int = Field(default=1)
-    weight: int = Field(..., gt=0, le=100)
+    weight: int = Field(..., gt=0, le=10)
         
 class WorkroomSchema(BaseModel):
     id: UUID

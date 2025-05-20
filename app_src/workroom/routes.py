@@ -8,10 +8,11 @@ from .service import upload_audio_to_s3
 from .schema import WorkroomCreate, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
 from typing import List, Dict, Optional
 from uuid import UUID
-from db.models import (Workroom, User, Task, TaskStatus, WorkroomLiveSession, 
+from db.models import (UserKPISummary, Workroom, User, Task, TaskStatus, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from auth.dependencies import get_current_user
-from tasks.schema import MemberSchema, TaskSchema, WorkroomDetailsSchema
+from tasks.schema import (FullMemberSchema, MemberMetricSchema, 
+                          TaskSchema, WorkroomDetailsSchema)
 from datetime import datetime, timezone
 from manager import WebSocketManager
 import boto3
@@ -41,7 +42,7 @@ s3_client = boto3.client(
 )
 
 async def _fetch_workroom_display_data(session: AsyncSession, user_id: UUID):
-    """Helper function to fetch and format workroom display data."""
+    """Helper function to fetch and format workroom display data with member avatars."""
     result = await session.execute(
         select(Workroom)
         .options(selectinload(Workroom.members), selectinload(Workroom.created_by_user))
@@ -53,14 +54,22 @@ async def _fetch_workroom_display_data(session: AsyncSession, user_id: UUID):
     )
     workrooms = result.scalars().all()
     display_data = []
+
     for wr in workrooms:
-        members_display = [member.first_name for member in wr.members[:3]]
+        members_display = [
+            {
+                "name": format_member_name(member.first_name, member.last_name),
+                "avatar_url": getattr(member, "avatar_url", None)
+            }
+            for member in wr.members[:3]
+        ]
         display_data.append({
             "id": wr.id,
             "title": wr.name,
-            "created_by": wr.created_by_user.first_name if wr.created_by_user else None,
+            "created_by": format_member_name(wr.created_by_user.first_name, wr.created_by_user.last_name),
             "members": members_display,
         })
+
     return display_data
 
 async def _get_total_workroom_count(session: AsyncSession, user_id: UUID) -> int:
@@ -110,11 +119,17 @@ async def get_created_workrooms(
     created_workrooms = result.scalars().all()
     display_data = []
     for wr in created_workrooms:
-        members_display = [member.first_name for member in wr.members[:3]]
+        members_display = [
+            {
+                "name": format_member_name(member.first_name, member.last_name),
+                "avatar_url": getattr(member, "avatar_url", None)
+            }
+            for member in wr.members[:3]
+        ]
         display_data.append({
             "id": wr.id,
             "title": wr.name,
-            "created_by": wr.created_by_user.first_name if wr.created_by_user else None,
+            "created_by": format_member_name(wr.created_by_user.first_name, wr.created_by_user.last_name),
             "members": members_display,
         })
     total_workrooms = await _get_total_workroom_count(session, current_user.id)
@@ -141,11 +156,17 @@ async def get_shared_workrooms(
     shared_workrooms = result.scalars().all()
     display_data = []
     for wr in shared_workrooms:
-        members_display = [member.first_name for member in wr.members[:3]]
+        members_display = [
+            {
+                "name": format_member_name(member.first_name, member.last_name),
+                "avatar_url": getattr(member, "avatar_url", None)
+            }
+            for member in wr.members[:3]
+        ]
         display_data.append({
             "id": wr.id,
             "title": wr.name,
-            "created_by": wr.created_by_user.first_name if wr.created_by_user else None,
+            "created_by": format_member_name(wr.created_by_user.first_name, wr.created_by_user.last_name),
             "members": members_display,
         })
     total_workrooms = await _get_total_workroom_count(session, current_user.id)
@@ -286,34 +307,61 @@ async def get_workroom_details(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    # Get workroom
+    # Fetch the workroom
     workroom = await session.get(Workroom, workroom_id)
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
-    
-    # Check authorization
+
+    # Authorization check
     if workroom.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this workroom")
 
-    # Get members (limit to 3) with null checks
-    members_query = await session.execute(
-        select(User)
-        .join(WorkroomMemberLink)
-        .where(WorkroomMemberLink.workroom_id == workroom_id)
-        .limit(3)
+    # Get all members
+    member_results = await session.execute(
+        select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == workroom_id)
     )
-    members = members_query.scalars().all()
-    
-    # Safe member name construction
-    member_list = [
-        MemberSchema(
-            name=format_member_name(member.first_name, member.last_name),
-            image_url=member.avatar_url or ""
-        )
-        for member in members
-    ]
+    members = member_results.scalars().all()
 
-    # Get task counts with null safety
+    # Get performance metrics for all members in one query
+    kpi_summaries_result = await session.execute(
+        select(UserKPISummary)
+        .where(UserKPISummary.workroom_id == workroom_id)
+    )
+    user_kpi_summaries = kpi_summaries_result.scalars().all()
+
+    # Organize kpi_breakdown per user
+    metrics_by_user = {}
+    for summary in user_kpi_summaries:
+        breakdown = summary.kpi_breakdown or []
+        metrics_by_user[summary.user_id] = [
+            MemberMetricSchema(
+                kpi_name=metric.get("kpi_name", "Unknown KPI"),
+                metric_value=metric.get("metric_value", 0),
+                weight=metric.get("weight", 1)
+            )
+            for metric in breakdown
+        ]
+
+    # Construct enriched member list
+    full_members = []
+    for member in members:
+        full_members.append(
+            FullMemberSchema(
+                id=member.id,
+                name=format_member_name(member.first_name, member.last_name),
+                email=member.email,
+                avatar_url=member.avatar_url,
+                xp=member.xp,
+                level=member.level,
+                productivity=float(member.productivity),
+                average_task_time=float(member.average_task_time),
+                daily_active_minutes=member.daily_active_minutes,
+                teamwork_collaborations=member.teamwork_collaborations,
+                metrics=metrics_by_user.get(member.id, [])
+            )
+        )
+
+    # Task counts
     completed_task_count = (await session.execute(
         select(func.count(Task.id))
         .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.COMPLETED)
@@ -323,24 +371,25 @@ async def get_workroom_details(
         select(func.count(Task.id))
         .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.PENDING)
     )).scalar() or 0
-    
-    # Get all tasks in the workroom
-    tasks = (await session.execute(
-        select(Task)
-        .where(Task.workroom_id == workroom_id)
-    )).scalars().all()
-    
-    # Convert tasks to TaskSchema
+
+    # All tasks in workroom
+    tasks_result = await session.execute(
+        select(Task).where(Task.workroom_id == workroom_id)
+    )
+    tasks = tasks_result.scalars().all()
     task_schemas = [TaskSchema.from_orm(task) for task in tasks]
 
+    # Return all enriched data
     return WorkroomDetailsSchema(
         id=workroom.id,
         name=workroom.name,
-        members=member_list,
+        kpis=workroom.kpis,
+        members=full_members,
         completed_task_count=completed_task_count,
         pending_task_count=pending_task_count,
         tasks=task_schemas
     )
+
 
 @workroom_router.delete("/{workroom_id}")
 async def delete_workroom(
@@ -395,7 +444,6 @@ async def get_workroom_members(
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
     
-    #  Check authorization.  Only the workroom creator can access this endpoint
     if workroom.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this workroom")
 
@@ -406,15 +454,48 @@ async def get_workroom_members(
         .where(WorkroomMemberLink.workroom_id == workroom_id)
     )
     members = members_query.scalars().all()
-    member_list = [
-        MemberSchema(
-            name=f"{(member.first_name or '')} {(member.last_name or '')}".strip(),
-            image_url=member.image_url if hasattr(member, 'image_url') else None
-        )
-        for member in members
-    ]
 
-    # Get task counts
+    member_list = []
+
+    for member in members:
+        # Fetch latest KPI summary for this member in the current workroom
+        kpi_summary_query = await session.execute(
+            select(UserKPISummary)
+            .where(UserKPISummary.user_id == member.id, UserKPISummary.workroom_id == workroom_id)
+            .order_by(UserKPISummary.date.desc())
+            .limit(1)
+        )
+        kpi_summary = kpi_summary_query.scalar()
+
+        # Parse metrics from kpi_breakdown if available
+        metric_schemas = []
+        if kpi_summary and kpi_summary.kpi_breakdown:
+            for kpi in kpi_summary.kpi_breakdown:
+                metric_schemas.append(
+                    MemberMetricSchema(
+                        kpi_name=kpi.get("kpi_name"),
+                        metric_value=kpi.get("metric_value"),
+                        weight=kpi.get("weight")
+                    )
+                )
+
+        # Add member info to list
+        full_member = FullMemberSchema(
+            id=member.id,
+            name=f"{(member.first_name or '')} {(member.last_name or '')}".strip(),
+            email=member.email,
+            avatar_url=getattr(member, "avatar_url", None),
+            xp=member.xp if hasattr(member, "xp") else 0,
+            level=member.level if hasattr(member, "level") else 1,
+            productivity=getattr(member, "productivity", 0.0),
+            average_task_time=getattr(member, "average_task_time", 0.0),
+            daily_active_minutes=getattr(member, "daily_active_minutes", 0),
+            teamwork_collaborations=getattr(member, "teamwork_collaborations", 0),
+            metrics=metric_schemas
+        )
+        member_list.append(full_member)
+
+    # Task counts
     completed_task_count_query = await session.execute(
         select(func.count(Task.id))
         .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.COMPLETED)
@@ -434,6 +515,8 @@ async def get_workroom_members(
         "completed_task_count": completed_task_count,
         "pending_task_count": pending_task_count,
     }
+
+
         
 @workroom_router.delete("/{workroom_id}/members", response_model=Dict[str, str])
 async def remove_members_from_workroom(

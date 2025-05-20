@@ -115,15 +115,30 @@ class TaskUpdate(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat() if v else None
         }
+    
+class MemberMetricSchema(BaseModel):
+    kpi_name: str
+    metric_value: int
+    weight: int
 
-class MemberSchema(BaseModel):
+class FullMemberSchema(BaseModel):
+    id: UUID
     name: str
-    image_url: Optional[str]
+    email: str
+    avatar_url: Optional[str]
+    xp: int
+    level: int
+    productivity: float
+    average_task_time: float
+    daily_active_minutes: int
+    teamwork_collaborations: int
+    metrics: List[MemberMetricSchema]
 
 class WorkroomDetailsSchema(BaseModel):
     id: UUID
     name: str
-    members: List[MemberSchema]
+    kpis: Optional[str]
+    members: List[FullMemberSchema]
     completed_task_count: int
     pending_task_count: int
     tasks: List[TaskSchema]
