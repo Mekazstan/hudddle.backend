@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from uuid import UUID
 from db.models import TaskStatus
+from workroom.schema import WorkroomPerformanceMetricSchema
 
 class TaskSchema(BaseModel):
     id: UUID
@@ -142,3 +143,4 @@ class WorkroomDetailsSchema(BaseModel):
     completed_task_count: int
     pending_task_count: int
     tasks: List[TaskSchema]
+    performance_metrics: List[WorkroomPerformanceMetricSchema]

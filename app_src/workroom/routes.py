@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from db.db_connect import get_session
 from .service import upload_audio_to_s3
-from .schema import WorkroomCreate, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
+from .schema import WorkroomCreate, WorkroomPerformanceMetricSchema, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
 from typing import List, Dict, Optional
 from uuid import UUID
 from db.models import (UserKPISummary, Workroom, User, Task, TaskStatus, WorkroomLiveSession, 
@@ -329,18 +329,35 @@ async def get_workroom_details(
     )
     user_kpi_summaries = kpi_summaries_result.scalars().all()
 
+    # Fetch all performance metric definitions for the workroom
+    performance_metrics_result = await session.execute(
+        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+    )
+    performance_metrics_objs = performance_metrics_result.scalars().all()
+    performance_metrics = [WorkroomPerformanceMetricSchema.from_orm(metric) for metric in performance_metrics_objs]
+
+    # Extract KPI names defined for the workroom
+    expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
+
     # Organize kpi_breakdown per user
     metrics_by_user = {}
     for summary in user_kpi_summaries:
-        breakdown = summary.kpi_breakdown or []
-        metrics_by_user[summary.user_id] = [
-            MemberMetricSchema(
-                kpi_name=metric.get("kpi_name", "Unknown KPI"),
-                metric_value=metric.get("metric_value", 0),
-                weight=metric.get("weight", 1)
+        raw_metrics = summary.kpi_breakdown or []
+        # Map by name for quick lookup
+        metric_map = {m.get("kpi_name"): m for m in raw_metrics}
+
+        # Ensure all KPIs are present
+        complete_metrics = []
+        for kpi_name in expected_kpis:
+            metric_data = metric_map.get(kpi_name, {})
+            complete_metrics.append(
+                MemberMetricSchema(
+                    kpi_name=kpi_name,
+                    metric_value=metric_data.get("metric_value", 0),
+                    weight=metric_data.get("weight", 0),
+                )
             )
-            for metric in breakdown
-        ]
+        metrics_by_user[summary.user_id] = complete_metrics
 
     # Construct enriched member list
     full_members = []
@@ -357,7 +374,10 @@ async def get_workroom_details(
                 average_task_time=float(member.average_task_time),
                 daily_active_minutes=member.daily_active_minutes,
                 teamwork_collaborations=member.teamwork_collaborations,
-                metrics=metrics_by_user.get(member.id, [])
+                metrics=metrics_by_user.get(member.id, [
+                    MemberMetricSchema(kpi_name=kpi_name, metric_value=0, weight=0)
+                    for kpi_name in expected_kpis
+                ])
             )
         )
 
@@ -378,6 +398,15 @@ async def get_workroom_details(
     )
     tasks = tasks_result.scalars().all()
     task_schemas = [TaskSchema.from_orm(task) for task in tasks]
+    
+    # Workroom performance metrics
+    performance_metrics_result = await session.execute(
+        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+    )
+    performance_metrics = [
+        WorkroomPerformanceMetricSchema.from_orm(metric)
+        for metric in performance_metrics_result.scalars().all()
+    ]
 
     # Return all enriched data
     return WorkroomDetailsSchema(
@@ -387,7 +416,8 @@ async def get_workroom_details(
         members=full_members,
         completed_task_count=completed_task_count,
         pending_task_count=pending_task_count,
-        tasks=task_schemas
+        tasks=task_schemas,
+        performance_metrics=performance_metrics
     )
 
 
@@ -454,6 +484,13 @@ async def get_workroom_members(
         .where(WorkroomMemberLink.workroom_id == workroom_id)
     )
     members = members_query.scalars().all()
+    
+    # Fetch all performance metric definitions for the workroom
+    performance_metrics_result = await session.execute(
+        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+    )
+    performance_metrics_objs = performance_metrics_result.scalars().all()
+    expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
 
     member_list = []
 
@@ -467,17 +504,19 @@ async def get_workroom_members(
         )
         kpi_summary = kpi_summary_query.scalar()
 
-        # Parse metrics from kpi_breakdown if available
+        # Build full metric list, ensuring all KPIs are included
+        metric_map = {k.get("kpi_name"): k for k in (kpi_summary.kpi_breakdown or [])} if kpi_summary else {}
         metric_schemas = []
-        if kpi_summary and kpi_summary.kpi_breakdown:
-            for kpi in kpi_summary.kpi_breakdown:
-                metric_schemas.append(
-                    MemberMetricSchema(
-                        kpi_name=kpi.get("kpi_name"),
-                        metric_value=kpi.get("metric_value"),
-                        weight=kpi.get("weight")
-                    )
+
+        for kpi_name in expected_kpis:
+            kpi_data = metric_map.get(kpi_name, {})
+            metric_schemas.append(
+                MemberMetricSchema(
+                    kpi_name=kpi_name,
+                    metric_value=kpi_data.get("metric_value", 0),
+                    weight=kpi_data.get("weight", 0),
                 )
+            )
 
         # Add member info to list
         full_member = FullMemberSchema(

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 from typing import List, Optional
 from db.models import TaskStatus
 from datetime import datetime
@@ -16,6 +16,8 @@ class WorkroomPerformanceMetricSchema(BaseModel):
     kpi_name: str
     metric_value: int = Field(default=1)
     weight: int = Field(..., gt=0, le=10)
+    
+    model_config = ConfigDict(from_attributes=True)
         
 class WorkroomSchema(BaseModel):
     id: UUID
