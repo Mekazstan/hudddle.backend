@@ -236,7 +236,6 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
     Sends invitation emails to friends to join a workroom
     """
     async def async_wrapper():
-        session = None
         try:
             workroom_uuid = UUID(workroom_id)
             async with async_session() as session:
@@ -250,12 +249,10 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
                 if not workroom:
                     logging.error(f"Workroom with ID {workroom_uuid} not found")
                     return
+                
+                members_to_add = []
 
                 for friend_email in friend_emails:
-                    stmt = select(User).filter_by(email=friend_email)
-                    result = await session.execute(stmt)
-                    friend_user = result.scalar_one_or_none()
-
                     try:
                         email_body = f"""
                             <!DOCTYPE html>
@@ -387,6 +384,10 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
                     except Exception as e:
                         logging.error(f"Error sending email to {friend_email}: {e}")
 
+                    stmt = select(User).filter_by(email=friend_email)
+                    result = await session.execute(stmt)
+                    friend_user = result.scalar_one_or_none()
+                    
                     # Add user if they exist and aren't already a member
                     if friend_user:
                         stmt = select(WorkroomMemberLink).where(
@@ -397,11 +398,18 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
                         existing_member = result.scalar_one_or_none()
                         
                         if not existing_member:
-                            session.add(WorkroomMemberLink(
-                                workroom_id=workroom.id,
-                                user_id=friend_user.id
-                            ))
-                            await session.commit()
+                            members_to_add.append(
+                                WorkroomMemberLink(
+                                    workroom_id=workroom.id,
+                                    user_id=friend_user.id
+                                )
+                            )
+
+                # Bulk add members, then commit ONCE
+                if members_to_add:
+                    session.add_all(members_to_add)
+
+                await session.commit()
         except Exception as e:
             logging.error(f"Error in send_workroom_invite_email_task: {e}", exc_info=True)
             raise self.retry(exc=e)
