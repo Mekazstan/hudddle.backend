@@ -63,7 +63,7 @@ async def accept_friend_request_by_email(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    sender_email = request_data.receiver_email.lower()
+    sender_email = request_data.sender_email.lower()
 
     if current_user.email.lower() == sender_email:
         raise HTTPException(status_code=400, detail="You cannot accept your own friend request.")
