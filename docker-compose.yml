@@ -41,7 +41,7 @@ services:
       HUDDDLE_LINK: ${HUDDDLE_LINK}
   celery_worker:
     container_name: celery_worker1
-    command: celery -A celery_task worker -l info --concurrency=1 -Q default
+    command: celery -A app_src.celery_task worker -l info --concurrency=1 -Q default
     build:
       context: .
       dockerfile: Dockerfile
