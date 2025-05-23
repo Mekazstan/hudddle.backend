@@ -3,7 +3,7 @@ from sqlalchemy import select
 from datetime import timedelta, datetime, date
 from typing import List
 from uuid import UUID
-from db.models import Task, TaskCollaborator, TaskStatus, User
+from app_src.db.models import Task, TaskCollaborator, TaskStatus, User
 
 
 def calculate_task_points(task: Task) -> int:

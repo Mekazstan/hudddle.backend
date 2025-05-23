@@ -1,9 +1,9 @@
 from pydantic import BaseModel, ConfigDict, Field, EmailStr
 from typing import List, Optional
-from db.models import TaskStatus
+from app_src.db.models import TaskStatus
 from datetime import datetime
 from uuid import UUID
-from auth.schema import UserSchema
+from app_src.auth.schema import UserSchema
 
 class WorkroomMetricSchema(BaseModel):
     metric_name: str

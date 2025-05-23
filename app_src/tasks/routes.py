@@ -6,11 +6,11 @@ from sqlalchemy import select
 from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
-from db.db_connect import get_session
+from app_src.db.db_connect import get_session
 from .schema import TaskCreate, TaskSchema, TaskUpdate
-from db.models import (FriendLink, Task, TaskCollaborator,
+from app_src.db.models import (FriendLink, Task, TaskCollaborator,
                        User, Workroom, WorkroomMemberLink)
-from auth.dependencies import get_current_user
+from app_src.auth.dependencies import get_current_user
 
 task_router = APIRouter()
 

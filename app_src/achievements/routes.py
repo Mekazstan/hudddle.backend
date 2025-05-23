@@ -3,9 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date
 from typing import List, Dict, Any
-from db.models import UserLevel, UserStreak, User
-from db.db_connect import get_session
-from auth.dependencies import get_current_user
+from app_src.db.models import UserLevel, UserStreak, User
+from app_src.db.db_connect import get_session
+from app_src.auth.dependencies import get_current_user
 from .service import update_user_levels
 
 

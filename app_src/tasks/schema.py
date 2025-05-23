@@ -2,8 +2,8 @@ from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime, timezone
 from uuid import UUID
-from db.models import TaskStatus
-from workroom.schema import WorkroomPerformanceMetricSchema
+from app_src.db.models import TaskStatus
+from app_src.workroom.schema import WorkroomPerformanceMetricSchema
 
 class TaskSchema(BaseModel):
     id: UUID

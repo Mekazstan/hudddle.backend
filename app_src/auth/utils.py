@@ -4,8 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
-from config import Config
-from db.models import User
+from app_src.config import Config
+from app_src.db.models import User
 import logging
 import jwt
 import uuid

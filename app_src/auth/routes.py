@@ -1,4 +1,4 @@
-from fastapi import (APIRouter, Depends, status, Response, File, Form,
+from fastapi import (APIRouter, Depends, status, Response,
                      HTTPException, UploadFile)
 from fastapi.responses import JSONResponse
 from sqlalchemy import insert, delete
@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
 # Import SQLAlchemy models and utilities
-from db.models import User, PasswordResetOTP
-from db.db_connect import get_session
-from celery_task import send_email_task
+from app_src.db.models import User, PasswordResetOTP
+from app_src.db.db_connect import get_session
+from app_src.celery_task import send_email_task
 from .schema import (
     ForgotPassword, Message, PasswordResetOTPRequest,
     UserCreateModel, UserLoginModel, AuthToken,
@@ -19,9 +19,8 @@ from .utils import (generate_password_hash, create_access_token,
                     verify_google_token, verify_password)
 from .dependencies import (AccessTokenBearer, get_current_user, 
                            RoleChecker, get_current_user_model)
-from config import Config
+from app_src.config import Config
 import random
-from typing import Optional, List
 from datetime import datetime, timedelta
 
 # Router and service setup

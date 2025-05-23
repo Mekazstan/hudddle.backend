@@ -8,17 +8,17 @@ from .service import upload_audio_to_s3
 from .schema import WorkroomCreate, WorkroomPerformanceMetricSchema, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
 from typing import List, Dict, Optional
 from uuid import UUID
-from db.models import (UserKPISummary, Workroom, User, Task, TaskStatus, WorkroomLiveSession, 
+from app_src.db.models import (UserKPISummary, Workroom, User, Task, TaskStatus, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
-from auth.dependencies import get_current_user
-from tasks.schema import (FullMemberSchema, MemberMetricSchema, 
+from app_src.auth.dependencies import get_current_user
+from app_src.tasks.schema import (FullMemberSchema, MemberMetricSchema, 
                           TaskSchema, WorkroomDetailsSchema)
 from datetime import datetime, timezone
-from manager import WebSocketManager
+from app_src.manager import WebSocketManager
 import boto3
 from botocore.exceptions import ClientError
-from config import Config
-from celery_task import (
+from app_src.config import Config
+from app_src.celery_task import (
     process_image_and_store_task,
     process_audio_and_store_report_task,
     process_workroom_end_session,

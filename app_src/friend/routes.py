@@ -4,13 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List
-from uuid import UUID
-from db.models import FriendLink, FriendRequest, FriendRequestStatus, User
+from app_src.db.models import FriendLink, FriendRequest, FriendRequestStatus, User
 from .schema import FriendRequestResponseSchema, FriendRequestSchema, AcceptFriendRequestSchema
-from auth.schema import UserSchema
-from auth.dependencies import get_current_user
-from db.db_connect import get_session
-from auth.service import UserService
+from app_src.auth.schema import UserSchema
+from app_src.auth.dependencies import get_current_user
+from app_src.db.db_connect import get_session
+from app_src.auth.service import UserService
 
 
 user_service = UserService() 

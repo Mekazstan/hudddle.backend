@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import (LevelCategory, LevelTier, Task, TaskCollaborator, 
+from app_src.db.models import (LevelCategory, LevelTier, Task, TaskCollaborator, 
                        TaskStatus, UserLevel, UserStreak)
 from datetime import date, timedelta
 

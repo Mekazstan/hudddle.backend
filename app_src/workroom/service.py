@@ -10,15 +10,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
-from db.models import (TaskStatus, UserKPIMetricHistory, UserKPISummary, Workroom, Leaderboard, 
+from app_src.db.models import (TaskStatus, UserKPIMetricHistory, UserKPISummary, Workroom, Leaderboard, 
                        Task, WorkroomKPIMetricHistory, WorkroomKPISummary, 
                        WorkroomLiveSession, WorkroomOverallKPI, User)
 import boto3
 from botocore.config import Config as BotoConfig
-from config import Config
+from app_src.config import Config
 from botocore.exceptions import ClientError
 from typing import List, Optional
-from config import Config
 from groq import Groq
 from datetime import datetime
 from .schema import ImageAnalysisResult, UserDailyKPIReport

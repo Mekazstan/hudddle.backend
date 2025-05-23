@@ -4,12 +4,12 @@ import botocore
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from fastapi import HTTPException, status, UploadFile
-from db.models import LevelCategory, LevelTier, User, UserLevel
+from app_src.db.models import LevelCategory, LevelTier, User, UserLevel
 from uuid import UUID, uuid4
 from .schema import UserCreateModel
 from .utils import generate_password_hash
 import logging
-from config import Config
+from app_src.config import Config
 from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 

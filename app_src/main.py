@@ -1,17 +1,17 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth.utils import get_current_user_websocket
-from auth.routes import auth_router
-from dashboard.routes import dashboard_router
-from tasks.routes import task_router
-from friend.routes import friend_router
-from workroom.routes import workroom_router
-from achievements.routes import achievement_router
+from app_src.auth.utils import get_current_user_websocket
+from app_src.auth.routes import auth_router
+from app_src.dashboard.routes import dashboard_router
+from app_src.tasks.routes import task_router
+from app_src.friend.routes import friend_router
+from app_src.workroom.routes import workroom_router
+from app_src.achievements.routes import achievement_router
 from app_src.middleware import register_middleware
 from contextlib import asynccontextmanager
-from db.db_connect import init_db
+from app_src.db.db_connect import init_db
 from app_src.manager import WebSocketManager
-from db.db_connect import get_session
+from app_src.db.db_connect import get_session
 
 manager = WebSocketManager()
 

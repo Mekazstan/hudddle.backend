@@ -1,7 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, EmailStr
 from uuid import UUID
-from db.models import FriendRequestStatus
+from app_src.db.models import FriendRequestStatus
         
 class FriendRequestSchema(BaseModel):
     receiver_email: EmailStr

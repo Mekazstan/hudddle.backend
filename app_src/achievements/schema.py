@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from uuid import UUID
 from typing import Optional
 from datetime import datetime, date
-from db.models import LevelCategory, LevelTier
+from app_src.db.models import LevelCategory, LevelTier
 
 class UserLevelSchema(BaseModel):
     id: UUID

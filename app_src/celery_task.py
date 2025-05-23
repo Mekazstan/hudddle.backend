@@ -14,7 +14,7 @@ from app_src.config import Config
 from app_src.db.db_connect import async_session
 from app_src.db.models import (User, Workroom, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
-from workroom.service import (analyze_image, calculate_workroom_kpi_overview, 
+from app_src.workroom.service import (analyze_image, calculate_workroom_kpi_overview, 
     generate_user_session_summary, store_analysis_result, delete_s3_object, process_audio,
     store_audio_analysis_report, analyze_text_from_audio, update_workroom_leaderboard)
 

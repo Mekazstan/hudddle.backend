@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Dict, Any
-from db.db_connect import get_session
-from auth.dependencies import get_current_user
-from db.models import User, FriendLink, UserStreak, Task, UserLevel
+from app_src.db.db_connect import get_session
+from app_src.auth.dependencies import get_current_user
+from app_src.db.models import User, FriendLink, UserStreak, Task, UserLevel
 from datetime import date, datetime
 import cachetools.func
 
