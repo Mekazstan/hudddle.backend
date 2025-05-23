@@ -3,7 +3,7 @@ from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from config import Config
+from app_src.config import Config
 import time
 import logging
 

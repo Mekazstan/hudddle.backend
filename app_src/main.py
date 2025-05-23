@@ -7,10 +7,10 @@ from tasks.routes import task_router
 from friend.routes import friend_router
 from workroom.routes import workroom_router
 from achievements.routes import achievement_router
-from middleware import register_middleware
+from app_src.middleware import register_middleware
 from contextlib import asynccontextmanager
 from db.db_connect import init_db
-from manager import WebSocketManager
+from app_src.manager import WebSocketManager
 from db.db_connect import get_session
 
 manager = WebSocketManager()

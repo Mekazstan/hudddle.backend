@@ -9,8 +9,8 @@ from celery import Celery
 from celery.schedules import crontab
 from datetime import datetime, timezone
 from sqlalchemy import select
-from .mail import mail, create_message
-from config import Config
+from app_src.mail import mail, create_message
+from app_src.config import Config
 from db.db_connect import async_session
 from db.models import (User, Workroom, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
