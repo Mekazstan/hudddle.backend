@@ -6,8 +6,6 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# COPY .env .
+COPY . .
 
-COPY ./app_src /app
-
-CMD [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80" ]
+CMD [ "uvicorn", "app_src.main:app", "--host", "0.0.0.0", "--port", "80" ]

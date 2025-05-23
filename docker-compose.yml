@@ -45,8 +45,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    working_dir: /app
     environment:
-      PYTHONPATH: /code
+      PYTHONPATH: /app
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
