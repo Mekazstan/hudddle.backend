@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from app_src.mail import mail, create_message
 from app_src.config import Config
-from db.db_connect import async_session
-from db.models import (User, Workroom, WorkroomLiveSession, 
+from app_src.db.db_connect import async_session
+from app_src.db.models import (User, Workroom, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from workroom.service import (analyze_image, calculate_workroom_kpi_overview, 
     generate_user_session_summary, store_analysis_result, delete_s3_object, process_audio,
