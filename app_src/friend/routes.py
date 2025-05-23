@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 from typing import List
 from uuid import UUID
 from db.models import FriendLink, FriendRequest, FriendRequestStatus, User
-from .schema import FriendRequestResponseSchema, FriendRequestSchema
+from .schema import FriendRequestResponseSchema, FriendRequestSchema, AcceptFriendRequestSchema
 from auth.schema import UserSchema
 from auth.dependencies import get_current_user
 from db.db_connect import get_session
@@ -57,32 +57,74 @@ async def send_friend_request(
     await session.refresh(new_request)
     return new_request
 
-
-@friend_router.post("/friends/request/{request_id}/accept")
-async def accept_friend_request(
-    request_id: UUID,
+@friend_router.post("/friends/request/accept")
+async def accept_friend_request_by_email(
+    request_data: AcceptFriendRequestSchema,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    friend_request = await session.get(FriendRequest, request_id)
+    sender_email = request_data.receiver_email.lower()
+
+    if current_user.email.lower() == sender_email:
+        raise HTTPException(status_code=400, detail="You cannot accept your own friend request.")
+
+    sender = await user_service.get_user_by_email(sender_email, session)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender not found")
+
+    # Find the pending friend request from that sender to the current user
+    result = await session.execute(
+        select(FriendRequest).where(
+            FriendRequest.sender_id == sender.id,
+            FriendRequest.receiver_id == current_user.id,
+            FriendRequest.status == FriendRequestStatus.pending
+        )
+    )
+    friend_request = result.scalars().first()
+
     if not friend_request:
-        raise HTTPException(status_code=404, detail="Friend request not found")
-    if friend_request.receiver_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to accept this request")
-    
-    # Update the request status
+        raise HTTPException(status_code=404, detail="No pending friend request from this user")
+
+    # Accept the friend request
     friend_request.status = FriendRequestStatus.accepted
     friend_request.updated_at = datetime.utcnow()
     session.add(friend_request)
-    
-    # Insert two rows in FriendLink for symmetry.
-    friend_link1 = FriendLink(user_id=friend_request.sender_id, friend_id=friend_request.receiver_id)
-    friend_link2 = FriendLink(user_id=friend_request.receiver_id, friend_id=friend_request.sender_id)
-    session.add(friend_link1)
-    session.add(friend_link2)
-    
+
+    # Create reciprocal friend links
+    session.add_all([
+        FriendLink(user_id=friend_request.sender_id, friend_id=friend_request.receiver_id),
+        FriendLink(user_id=friend_request.receiver_id, friend_id=friend_request.sender_id)
+    ])
+
     await session.commit()
-    return {"message": "Friend request accepted."}
+    return {"message": "Friend request accepted"}
+
+
+# @friend_router.post("/friends/request/{request_id}/accept")
+# async def accept_friend_request(
+#     request_id: UUID,
+#     session: AsyncSession = Depends(get_session),
+#     current_user: User = Depends(get_current_user),
+# ):
+#     friend_request = await session.get(FriendRequest, request_id)
+#     if not friend_request:
+#         raise HTTPException(status_code=404, detail="Friend request not found")
+#     if friend_request.receiver_id != current_user.id:
+#         raise HTTPException(status_code=403, detail="Not authorized to accept this request")
+    
+#     # Update the request status
+#     friend_request.status = FriendRequestStatus.accepted
+#     friend_request.updated_at = datetime.utcnow()
+#     session.add(friend_request)
+    
+#     # Insert two rows in FriendLink for symmetry.
+#     friend_link1 = FriendLink(user_id=friend_request.sender_id, friend_id=friend_request.receiver_id)
+#     friend_link2 = FriendLink(user_id=friend_request.receiver_id, friend_id=friend_request.sender_id)
+#     session.add(friend_link1)
+#     session.add(friend_link2)
+    
+#     await session.commit()
+#     return {"message": "Friend request accepted."}
 
 @friend_router.get("/friends", response_model=List[UserSchema])
 async def get_current_user_friends(

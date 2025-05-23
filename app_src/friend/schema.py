@@ -22,3 +22,6 @@ class FriendRequestResponseSchema(BaseModel):
 
     class Config:
         from_attributes = True
+        
+class AcceptFriendRequestSchema(BaseModel):
+    sender_email: EmailStr
