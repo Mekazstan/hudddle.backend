@@ -3,7 +3,7 @@ from fastapi import Body, APIRouter, File, HTTPException, Depends, UploadFile, s
 from sqlalchemy import func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from db.db_connect import get_session
+from app_src.db.db_connect import get_session
 from .service import upload_audio_to_s3
 from .schema import WorkroomCreate, WorkroomPerformanceMetricSchema, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
 from typing import List, Dict, Optional
