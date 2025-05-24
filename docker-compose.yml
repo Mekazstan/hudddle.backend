@@ -42,10 +42,10 @@ services:
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
   celery_worker:
+    command: celery -A app_src.celery_task worker --concurrency=1 --loglevel=info --queues=default
     build:
       context: .
       dockerfile: Dockerfile
-    command: sh -c "./wait-for-it.sh redis:6379 -- celery -A app_src.celery_task worker --concurrency=1 --loglevel=info --queues=default"
     working_dir: /app
     environment:
       PYTHONPATH: /app
