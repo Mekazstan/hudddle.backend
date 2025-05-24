@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY ./app_src /app/app_src
 
 # Make the script executable
-RUN chmod +x /app/app_src/wait-for-it.sh
+RUN chmod +x /app/wait-for-it.sh
 
 # Set PYTHONPATH so imports inside app_src work
 ENV PYTHONPATH="${PYTHONPATH}:/app/app_src"
