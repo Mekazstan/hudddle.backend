@@ -1,12 +1,10 @@
 services:
   redis:
-    container_name: redis_image
     image: redis:latest
     ports:
       - "6379:6379"
   api:
     build: .
-    container_name: hudddle_backend_app
     ports:
       - "8000:80"
     volumes:
@@ -44,11 +42,10 @@ services:
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
   celery_worker:
-    container_name: celery_worker1
-    command: celery -A app_src.celery_task worker -l info --concurrency=1 -Q default
     build:
       context: .
       dockerfile: Dockerfile
+    command: sh -c "./wait-for-it.sh redis:6379 -- celery -A app_src.celery_task worker --concurrency=1 --loglevel=info --queues=default"
     working_dir: /app
     environment:
       PYTHONPATH: /app
@@ -81,6 +78,8 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
+    volumes:
+      - .:/app
     depends_on:
       - redis
       - api
