@@ -1,9 +1,11 @@
 services:
   redis:
+    container_name: redis
     image: redis:latest
     ports:
       - "6379:6379"
   api:
+    container_name: hudddle_api
     build: .
     ports:
       - "8000:80"
@@ -42,6 +44,7 @@ services:
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
   celery_worker:
+    container_name: celery_worker_1
     command: celery -A app_src.celery_task worker --concurrency=1 --loglevel=info --queues=default
     build:
       context: .

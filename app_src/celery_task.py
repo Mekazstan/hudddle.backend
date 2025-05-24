@@ -51,12 +51,14 @@ def configure_logging(**kwargs):
 @celery_app.task
 def send_email_task(message_data: dict):
     async def inner():
+        logging.info(f"Task send_email_task started for recipients: {message_data.get('recipients')}")
         message = create_message(**message_data)
         try:
+            logging.info(f"Attempting to send message to {message.recipients}")
             await mail.send_message(message)
-            logger.info(f"Email sent to {message.recipients}")
+            logger.info(f"Email sent successfully to {message.recipients}")
         except Exception as e:
-            logger.error(f"Error sending email: {e}")
+            logger.error(f"Error sending email to {message.recipients}: {e}", exc_info=True)
 
     # Safe event loop handling
     loop = asyncio.get_event_loop()
@@ -237,9 +239,11 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
     """
     async def async_wrapper():
         try:
+            logging.info(f"Task send_workroom_invite_email_task started for workroom {workroom_id}")
             workroom_uuid = UUID(workroom_id)
             async with async_session() as session:
                 await session.begin()
+                logging.info("DB session opened for invite task")
                 
                 invite_url = Config.HUDDDLE_LINK
 
@@ -249,11 +253,13 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
                 if not workroom:
                     logging.error(f"Workroom with ID {workroom_uuid} not found")
                     return
+                logging.info(f"Workroom {workroom.name} found for invite task.")
                 
                 members_to_add = []
 
                 for friend_email in friend_emails:
                     try:
+                        logging.info(f"Attempting to send email to {friend_email}")
                         email_body = f"""
                             <!DOCTYPE html>
                             <html lang="en">
@@ -381,6 +387,7 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
                             "body": email_body,
                         }
                         send_email_task.delay(message_data)
+                        logging.info(f"Enqueued send_email_task for {friend_email}")
                     except Exception as e:
                         logging.error(f"Error sending email to {friend_email}: {e}")
 
@@ -410,6 +417,7 @@ def send_workroom_invite_email_task(self, workroom_id: str, creator_name: str, f
                     session.add_all(members_to_add)
 
                 await session.commit()
+                logging.info(f"Members added and committed for workroom {workroom_id}")
         except Exception as e:
             logging.error(f"Error in send_workroom_invite_email_task: {e}", exc_info=True)
             raise self.retry(exc=e)
