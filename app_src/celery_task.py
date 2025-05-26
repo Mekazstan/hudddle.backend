@@ -48,6 +48,32 @@ celery_app.conf.beat_schedule = {
 def configure_logging(**kwargs):
     logging.basicConfig(level=logging.INFO)
 
+@celery_app.task(
+    queue="emails",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={'max_retries': 3},
+    time_limit=30
+)
+def send_email_task(email_data: dict):
+    try:
+        logger.info(f"Starting email send to {email_data['recipients']}")
+        
+        message = create_message(
+            recipients=email_data['recipients'],
+            subject=email_data['subject'],
+            body=email_data['body']
+        )
+        
+        async_to_sync(mail.send_message)(message)
+        logger.info(f"Email successfully sent to {email_data['recipients']}")
+        
+        return {"status": "success", "recipients": email_data['recipients']}
+        
+    except Exception as e:
+        logger.error(f"Failed to send email to {email_data.get('recipients', 'unknown')}: {str(e)}")
+        raise
+
 @celery_app.task(queue="emails")
 def send_workroom_invites(workroom_name: str, creator_name: str, recipient_emails: List[str]):
     """Simple synchronous task that just sends emails"""
@@ -183,7 +209,7 @@ def send_workroom_invites(workroom_name: str, creator_name: str, recipient_email
                     subject=subject,
                     body=email_body
                 )
-                mail.send_message(message)
+                async_to_sync(mail.send_message)(message)
                 logger.info(f"Email sent to {email}")
             except Exception as e:
                 logger.error(f"Failed to send to {email}: {str(e)}")
@@ -511,4 +537,142 @@ def generate_manager_email(manager_name: str, workroom_name: str, date: str) -> 
 </html>
 """    
 
-        
+def get_password_reset_template(otp: str) -> str:
+    return f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Password Reset OTP</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #f4f4f4;
+                    color: #333;
+                    line-height: 1.6;
+                }}
+                
+                .email-wrapper {{
+                    max-width: 600px;
+                    margin: 20px auto;
+                    background-color: #ffffff;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                }}
+                
+                .email-header {{
+                    background-color: #9b87f5;
+                    text-align: center;
+                    padding: 30px;
+                }}
+                
+                .logo {{
+                    color: white;
+                    font-size: 24px;
+                    font-weight: bold;
+                    letter-spacing: 1px;
+                }}
+                
+                .container {{
+                    padding: 30px 40px;
+                    text-align: center;
+                    background-color: #f7f7f7;
+                }}
+                
+                h1 {{
+                    color: #1A1F2C;
+                    font-size: 24px;
+                    margin-bottom: 20px;
+                }}
+                
+                p {{
+                    color: #444;
+                    font-size: 16px;
+                    margin: 15px 0;
+                }}
+                
+                strong {{
+                    color: #7E69AB;
+                    font-size: 24px;
+                    letter-spacing: 2px;
+                }}
+                
+                .footer {{
+                    padding: 20px;
+                    text-align: center;
+                    font-size: 14px;
+                    color: #666;
+                    border-top: 1px solid #eee;
+                    background-color: #f7f7f7;
+                }}
+                
+                .footer p {{
+                    margin: 8px 0;
+                    font-size: 14px;
+                    color: #666;
+                }}
+                
+                .footer a {{
+                    color: #9b87f5;
+                    text-decoration: none;
+                }}
+                
+                .footer a:hover {{
+                    text-decoration: underline;
+                }}
+                
+                .social-icon {{
+                    width: 16px;
+                    height: 16px;
+                    vertical-align: middle;
+                    margin-right: 5px;
+                }}
+                
+                .unsubscribe {{
+                    color: #999;
+                    font-size: 12px;
+                    margin-top: 20px;
+                }}
+                
+                @media only screen and (max-width: 600px) {{
+                    .email-wrapper {{
+                        width: 100%;
+                        margin: 0;
+                        border-radius: 0;
+                    }}
+                    
+                    .container {{
+                        padding: 20px;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="email-wrapper">
+                <div class="email-header">
+                    <div class="logo">Hudddle.</div>
+                </div>
+                
+                <div class="container">
+                    <h1>Password Reset OTP</h1>
+                    <p>Your OTP code is: <strong>{otp}</strong></p>
+                    <p>This code expires in 15 minutes.</p>
+                    
+                    <p style="margin-top: 18px; font-style: italic;">
+                        <br>
+                        Let's make work fun together. The Team at Hudddle.io
+                    </p>
+                </div>
+                
+                <div class="footer">
+                    <p>You can unsubscribe from this service anytime you want.</p>
+                    <p>Follow us on <a href="https://x.com/hudddler">Twitter</a></p>
+                </div>
+            </div>
+        </body>
+        </html>
+    """

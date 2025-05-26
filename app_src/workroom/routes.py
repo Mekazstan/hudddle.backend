@@ -181,7 +181,7 @@ async def create_workroom(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        # 1. Create the Workroom
+        # Create the Workroom
         new_workroom = Workroom(
             name=workroom_data.name,
             created_by=current_user.id,
@@ -190,7 +190,7 @@ async def create_workroom(
         session.add(new_workroom)
         await session.flush()
 
-        # 2. Add Performance Metrics
+        # Add Performance Metrics
         for pm_data in workroom_data.performance_metrics:
             session.add(WorkroomPerformanceMetric(
                 workroom_id=new_workroom.id,
@@ -200,23 +200,21 @@ async def create_workroom(
                 weight=pm_data.weight,
             ))
 
-        # 3. Add creator as member
+        # Add creator as member
         session.add(WorkroomMemberLink(
             workroom_id=new_workroom.id,
             user_id=current_user.id,
         ))
 
-        # 4. Process friend emails (SYNC PART)
+        # Process friend emails
         emails_to_invite = []
         if workroom_data.friend_emails:
             for friend_email in workroom_data.friend_emails:
-                # Check if user exists and add to workroom
                 friend_user = (await session.execute(
                     select(User).filter_by(email=friend_email)
                 )).scalar_one_or_none()
                 
                 if friend_user:
-                    # Add to workroom if not already a member
                     existing_member = (await session.execute(
                         select(WorkroomMemberLink).where(
                             WorkroomMemberLink.workroom_id == new_workroom.id,
@@ -233,8 +231,21 @@ async def create_workroom(
                     emails_to_invite.append(friend_email)
 
         await session.commit()
-        
-        # 5. Send invites to non-members
+
+        # 5. Explicitly load relationships
+        await session.refresh(new_workroom)
+        result = await session.execute(
+            select(Workroom)
+            .where(Workroom.id == new_workroom.id)
+            .options(
+                selectinload(Workroom.metrics),
+                selectinload(Workroom.performance_metrics),
+                selectinload(Workroom.members)
+            )
+        )
+        loaded_workroom = result.scalar_one()
+
+        # 6. Send invites to non-members
         if emails_to_invite:
             send_workroom_invites.delay(
                 workroom_name=new_workroom.name,
@@ -242,7 +253,7 @@ async def create_workroom(
                 recipient_emails=emails_to_invite
             )
 
-        return new_workroom
+        return loaded_workroom
         
     except Exception as e:
         await session.rollback()

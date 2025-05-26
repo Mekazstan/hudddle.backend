@@ -3,12 +3,13 @@ from fastapi import (APIRouter, Depends, status, Response,
 from fastapi.responses import JSONResponse
 from sqlalchemy import insert, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 import logging
 
 # Import SQLAlchemy models and utilities
 from app_src.db.models import User, PasswordResetOTP
 from app_src.db.db_connect import get_session
-from app_src.celery_task import send_email_task
+from app_src.celery_task import get_password_reset_template, send_email_task
 from .schema import (
     ForgotPassword, Message, PasswordResetOTPRequest,
     UserCreateModel, UserLoginModel, AuthToken,
@@ -185,177 +186,54 @@ async def password_reset_request(
     email_data: ForgotPassword,
     session: AsyncSession = Depends(get_session)
 ):
-    email = email_data.email
-    user = await user_service.get_user_by_email(email, session)
-    if not user:
-        return JSONResponse(
-            content={"message": "If this email exists, you'll receive an OTP"},
-            status_code=status.HTTP_200_OK
-        )
+    try:
+        user = await user_service.get_user_by_email(email_data.email, session)
+        if not user:
+            return JSONResponse(
+                content={"message": "If this email exists, you'll receive an OTP"},
+                status_code=status.HTTP_200_OK
+            )
+        otp = str(random.randint(1000, 9999))
+        expires_at = datetime.utcnow() + timedelta(minutes=15)
+            
+        async with session.begin():
+            # Delete existing OTPs
+            await session.execute(
+                delete(PasswordResetOTP)
+                .where(PasswordResetOTP.email == email_data.email)
+            )
+            
+            # Store new OTP
+            await session.execute(
+                insert(PasswordResetOTP).values(
+                    email=email_data.email,
+                    otp=otp,
+                    expires_at=expires_at
+                )
+            )
         
-    await session.execute(
-        delete(PasswordResetOTP)
-        .where(PasswordResetOTP.email == email)
-    )
-    
-    otp = str(random.randint(1000, 9999))
-    expires_at = datetime.utcnow() + timedelta(minutes=15)
-    await session.execute(
-        insert(PasswordResetOTP).values(
-            email=email,
-            otp=otp,
-            expires_at=expires_at
+        email_task = send_email_task.delay({
+            "recipients": [email_data.email],
+            "subject": "Your Password Reset OTP",
+            "body": get_password_reset_template(otp)
+        })
+
+        logging.info(f"Password reset OTP generated for {email_data.email}, task ID: {email_task.id}")
+
+        return {"message": "OTP sent to your email (processing in background)"}
+    except SQLAlchemyError as e:
+        logging.error(f"Database error during password reset: {str(e)}")
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error occurred"
         )
-    )
-    await session.commit()
-    html_message = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Password Reset OTP</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 0;
-                    background-color: #f4f4f4;
-                    color: #333;
-                    line-height: 1.6;
-                }}
-                
-                .email-wrapper {{
-                    max-width: 600px;
-                    margin: 20px auto;
-                    background-color: #ffffff;
-                    border-radius: 8px;
-                    overflow: hidden;
-                    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-                }}
-                
-                .email-header {{
-                    background-color: #9b87f5;
-                    text-align: center;
-                    padding: 30px;
-                }}
-                
-                .logo {{
-                    color: white;
-                    font-size: 24px;
-                    font-weight: bold;
-                    letter-spacing: 1px;
-                }}
-                
-                .container {{
-                    padding: 30px 40px;
-                    text-align: center;
-                    background-color: #f7f7f7;
-                }}
-                
-                h1 {{
-                    color: #1A1F2C;
-                    font-size: 24px;
-                    margin-bottom: 20px;
-                }}
-                
-                p {{
-                    color: #444;
-                    font-size: 16px;
-                    margin: 15px 0;
-                }}
-                
-                strong {{
-                    color: #7E69AB;
-                    font-size: 24px;
-                    letter-spacing: 2px;
-                }}
-                
-                .footer {{
-                    padding: 20px;
-                    text-align: center;
-                    font-size: 14px;
-                    color: #666;
-                    border-top: 1px solid #eee;
-                    background-color: #f7f7f7;
-                }}
-                
-                .footer p {{
-                    margin: 8px 0;
-                    font-size: 14px;
-                    color: #666;
-                }}
-                
-                .footer a {{
-                    color: #9b87f5;
-                    text-decoration: none;
-                }}
-                
-                .footer a:hover {{
-                    text-decoration: underline;
-                }}
-                
-                .social-icon {{
-                    width: 16px;
-                    height: 16px;
-                    vertical-align: middle;
-                    margin-right: 5px;
-                }}
-                
-                .unsubscribe {{
-                    color: #999;
-                    font-size: 12px;
-                    margin-top: 20px;
-                }}
-                
-                @media only screen and (max-width: 600px) {{
-                    .email-wrapper {{
-                        width: 100%;
-                        margin: 0;
-                        border-radius: 0;
-                    }}
-                    
-                    .container {{
-                        padding: 20px;
-                    }}
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="email-wrapper">
-                <div class="email-header">
-                    <div class="logo">Hudddle.</div>
-                </div>
-                
-                <div class="container">
-                    <h1>Password Reset OTP</h1>
-                    <p>Your OTP code is: <strong>{otp}</strong></p>
-                    <p>This code expires in 15 minutes.</p>
-                    
-                    <p style="margin-top: 18px; font-style: italic;">
-                        <br>
-                        Let's make work fun together. The Team at Hudddle.io
-                    </p>
-                </div>
-                
-                <div class="footer">
-                    <p>You can unsubscribe from this service anytime you want.</p>
-                    <p>Follow us on <a href="https://x.com/hudddler">Twitter</a></p>
-                </div>
-            </div>
-        </body>
-        </html>
-    """
-    
-    message_data = {
-        "recipients": [email],
-        "subject": "Your Password Reset OTP",
-        "body": html_message
-    }
-    
-    send_email_task.delay(message_data)
-    
-    return {"message": "OTP sent to your email (processing in background)"}
+    except Exception as e:
+        logging.error(f"Unexpected error in password reset: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred"
+        )
     
 @auth_router.post("/verify-reset-otp")
 async def verify_reset_otp(
