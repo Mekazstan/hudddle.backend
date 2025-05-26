@@ -1,20 +1,22 @@
 import logging
-from fastapi import Body, APIRouter, File, HTTPException, Depends, UploadFile, status
+from fastapi import (Body, APIRouter, File, HTTPException, 
+                     Depends, UploadFile, status)
 from sqlalchemy import func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app_src.db.db_connect import get_session
 from .service import upload_audio_to_s3
-from .schema import WorkroomCreate, WorkroomPerformanceMetricSchema, WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate
+from .schema import (WorkroomCreate, WorkroomPerformanceMetricSchema, 
+                     WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
 from uuid import UUID
-from app_src.db.models import (UserKPISummary, Workroom, User, Task, TaskStatus, WorkroomLiveSession, 
+from app_src.db.models import (UserKPISummary, Workroom, User, 
+                               Task, TaskStatus, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from app_src.auth.dependencies import get_current_user
 from app_src.tasks.schema import (FullMemberSchema, MemberMetricSchema, 
                           TaskSchema, WorkroomDetailsSchema)
 from datetime import datetime, timezone
-from app_src.manager import WebSocketManager
 import boto3
 from botocore.exceptions import ClientError
 from app_src.config import Config
@@ -25,7 +27,6 @@ from app_src.celery_task import (
     send_workroom_invite_email_task
 )
 
-manager = WebSocketManager()
 workroom_router = APIRouter()
 
 # AWS S3 Configuration
@@ -223,11 +224,20 @@ async def create_workroom(
 
         # 4. Invite friends via Celery task
         if workroom_data.friend_emails:
-            send_workroom_invite_email_task.delay(
-                workroom_id=str(new_workroom.id),
-                creator_name = current_user.first_name or "Someone",
-                friend_emails=workroom_data.friend_emails,
-            )
+            logging.info(f"Attempting to enqueue send_workroom_invite_email_task for workroom_id: {new_workroom.id}, friend_emails: {workroom_data.friend_emails}")
+            try:
+                send_workroom_invite_email_task.apply_async(
+                    kwargs={
+                        'workroom_id': str(new_workroom.id),
+                        'creator_name': current_user.first_name or "Someone",
+                        'friend_emails': workroom_data.friend_emails
+                    }
+                )
+                logging.info(f"Successfully called .delay() for workroom_id: {new_workroom.id}")
+            except Exception as e:
+                logging.error(f"Failed to enqueue send_workroom_invite_email_task: {e}", exc_info=True)
+        else:
+            logging.info(f"No friend_emails provided for workroom_id: {new_workroom.id}. Skipping invite task.")
 
         return new_workroom
         
@@ -420,7 +430,6 @@ async def get_workroom_details(
         performance_metrics=performance_metrics
     )
 
-
 @workroom_router.delete("/{workroom_id}")
 async def delete_workroom(
     workroom_id: UUID,
@@ -555,8 +564,6 @@ async def get_workroom_members(
         "pending_task_count": pending_task_count,
     }
 
-
-        
 @workroom_router.delete("/{workroom_id}/members", response_model=Dict[str, str])
 async def remove_members_from_workroom(
     workroom_id: UUID,
@@ -675,7 +682,12 @@ async def end_live_session(
         raise HTTPException(status_code=400, detail="Live session is not active.")
 
     # 4. Trigger background task to end session
-    process_workroom_end_session.delay(str(workroom_id), str(session_id), str(user_id))
+    process_workroom_end_session.apply_async(
+        kwargs={
+                'workroom_id': str(workroom_id),
+                'session_id': str(session_id),
+                'user_id': str(user_id)
+        })
 
     return {
         "message": "Session end initiated. Processing will continue in background.",
@@ -728,13 +740,14 @@ async def analyze_screenshot(
 
         image_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{image_filename}"
 
-        process_image_and_store_task.delay(
-            str(user_id),
-            str(session_id),
-            image_url,
-            image_filename,
-            timestamp.isoformat(),
-        )
+        process_image_and_store_task.apply_async(
+            kwargs={
+                'user_id': str(user_id),
+                'session_id': str(session_id),
+                'image_url': image_url,
+                'image_filename': image_filename,
+                'timestamp_str': timestamp.isoformat()
+            })
 
         return (
             {"message": "Screenshot received for processing", "image_url": image_url},
@@ -780,13 +793,14 @@ async def analyze_audio(
             )
 
         # Trigger Celery task for background processing
-        process_audio_and_store_report_task.delay(
-            str(user_id),
-            str(session_id),
-            audio_url,
-            audio_s3_key,
-            timestamp.isoformat(),
-        )
+        process_audio_and_store_report_task.apply_async(
+            kwargs={
+                'user_id': str(user_id),
+                'session_id': str(session_id),
+                'audio_url': audio_url,
+                'audio_s3_key': audio_s3_key,
+                'timestamp_str': timestamp.isoformat()
+            })
 
         return (
             {"message": "Audio received for analysis. Processing in background."},
