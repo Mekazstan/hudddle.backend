@@ -46,7 +46,7 @@ services:
   celery_worker:
     container_name: celery_worker_1
     # command: celery -A app_src.celery_task worker --loglevel=info --pool=threads --concurrency=10 --autoscale=1,10  --queues=celery
-    command: celery -A app_src.celery_task worker --loglevel=info --autoscale=1,10 -Q first,emails,images,sessions
+    command: celery -A app_src.celery_task worker --loglevel=info --autoscale=1,10 -Q emails,images,sessions
     build:
       context: .
       dockerfile: Dockerfile

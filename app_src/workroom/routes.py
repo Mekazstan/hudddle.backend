@@ -2,6 +2,7 @@ import logging
 from fastapi import (Body, APIRouter, File, HTTPException, 
                      Depends, UploadFile, status)
 from sqlalchemy import func, select, delete
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app_src.db.db_connect import get_session
@@ -24,7 +25,7 @@ from app_src.celery_task import (
     process_image_and_store_task,
     process_audio_and_store_report_task,
     process_workroom_end_session,
-    send_workroom_invite_email_task
+    send_workroom_invites
 )
 
 workroom_router = APIRouter()
@@ -189,55 +190,57 @@ async def create_workroom(
         session.add(new_workroom)
         await session.flush()
 
-        # 2. Add Performance Metrics with weights
+        # 2. Add Performance Metrics
         for pm_data in workroom_data.performance_metrics:
-            pm = WorkroomPerformanceMetric(
+            session.add(WorkroomPerformanceMetric(
                 workroom_id=new_workroom.id,
                 kpi_name=pm_data.kpi_name,
                 metric_value=pm_data.metric_value,
                 user_id=current_user.id,
                 weight=pm_data.weight,
-            )
-            session.add(pm)
+            ))
 
-        # 3. Add the creator as a member
-        workroom_member_link = WorkroomMemberLink(
+        # 3. Add creator as member
+        session.add(WorkroomMemberLink(
             workroom_id=new_workroom.id,
             user_id=current_user.id,
-        )
-        session.add(workroom_member_link)
-        
+        ))
+
+        # 4. Process friend emails (SYNC PART)
+        emails_to_invite = []
+        if workroom_data.friend_emails:
+            for friend_email in workroom_data.friend_emails:
+                # Check if user exists and add to workroom
+                friend_user = (await session.execute(
+                    select(User).filter_by(email=friend_email)
+                )).scalar_one_or_none()
+                
+                if friend_user:
+                    # Add to workroom if not already a member
+                    existing_member = (await session.execute(
+                        select(WorkroomMemberLink).where(
+                            WorkroomMemberLink.workroom_id == new_workroom.id,
+                            WorkroomMemberLink.user_id == friend_user.id
+                        )
+                    )).scalar_one_or_none()
+                    
+                    if not existing_member:
+                        session.add(WorkroomMemberLink(
+                            workroom_id=new_workroom.id,
+                            user_id=friend_user.id
+                        ))
+                else:
+                    emails_to_invite.append(friend_email)
+
         await session.commit()
         
-        # Refresh and load relationships
-        await session.refresh(new_workroom)
-        # Load relationships one by one to be explicit
-        await session.execute(
-            select(Workroom)
-            .where(Workroom.id == new_workroom.id)
-            .options(
-                selectinload(Workroom.metrics),
-                selectinload(Workroom.performance_metrics),
-                selectinload(Workroom.members)
+        # 5. Send invites to non-members
+        if emails_to_invite:
+            send_workroom_invites.delay(
+                workroom_name=new_workroom.name,
+                creator_name=current_user.first_name or "Someone",
+                recipient_emails=emails_to_invite
             )
-        )
-
-        # 4. Invite friends via Celery task
-        if workroom_data.friend_emails:
-            logging.info(f"Attempting to enqueue send_workroom_invite_email_task for workroom_id: {new_workroom.id}, friend_emails: {workroom_data.friend_emails}")
-            try:
-                send_workroom_invite_email_task.apply_async(
-                    kwargs={
-                        'workroom_id': str(new_workroom.id),
-                        'creator_name': current_user.first_name or "Someone",
-                        'friend_emails': workroom_data.friend_emails
-                    }
-                )
-                logging.info(f"Successfully called .delay() for workroom_id: {new_workroom.id}")
-            except Exception as e:
-                logging.error(f"Failed to enqueue send_workroom_invite_email_task: {e}", exc_info=True)
-        else:
-            logging.info(f"No friend_emails provided for workroom_id: {new_workroom.id}. Skipping invite task.")
 
         return new_workroom
         
@@ -651,7 +654,7 @@ async def start_live_session(
         "start_time": new_session.start_time.isoformat(),
     }
 
-@workroom_router.post("/{workroom_id}/end-live-session")
+@workroom_router.post("/{workroom_id}/end-live-session", status_code=status.HTTP_202_ACCEPTED)
 async def end_live_session(
     workroom_id: UUID,
     session_id: UUID,
@@ -659,40 +662,61 @@ async def end_live_session(
     current_user: User = Depends(get_current_user),
 ):
     """Trigger the background task to end a live session in the workroom."""
-    user_id = current_user.id
-    # 1. Check if workroom exists
-    workroom = await session.get(Workroom, workroom_id)
-    if not workroom:
-        raise HTTPException(status_code=404, detail="Workroom not found")
+    try:
+        # 1. Validate inputs and permissions
+        workroom = await session.get(Workroom, workroom_id)
+        if not workroom:
+            raise HTTPException(status_code=404, detail="Workroom not found")
 
-    # 2. Check if live session exists
-    live_session_result = await session.execute(
-        select(WorkroomLiveSession).where(WorkroomLiveSession.id == session_id)
-    )
-    live_session = live_session_result.scalar_one_or_none()
+        live_session = await session.execute(
+            select(WorkroomLiveSession)
+            .where(
+                WorkroomLiveSession.id == session_id,
+                WorkroomLiveSession.workroom_id == workroom_id
+            )
+        )
+        live_session = live_session.scalar_one_or_none()
 
-    if not live_session:
-        raise HTTPException(status_code=404, detail="Live session not found.")
+        if not live_session:
+            raise HTTPException(status_code=404, detail="Live session not found or doesn't belong to this workroom")
 
-    # 3. Validate ownership and activity
-    if live_session.workroom_id != workroom_id:
-        raise HTTPException(status_code=400, detail="Session does not belong to this workroom.")
+        if not live_session.is_active:
+            raise HTTPException(status_code=400, detail="Live session is already ended")
 
-    if not live_session.is_active:
-        raise HTTPException(status_code=400, detail="Live session is not active.")
+        # 2. Immediately mark as ending to prevent duplicate requests
+        live_session.is_ending = True
+        await session.commit()
 
-    # 4. Trigger background task to end session
-    process_workroom_end_session.apply_async(
-        kwargs={
+        # 3. Enqueue task with proper monitoring
+        task = process_workroom_end_session.apply_async(
+            kwargs={
                 'workroom_id': str(workroom_id),
                 'session_id': str(session_id),
-                'user_id': str(user_id)
-        })
+                'user_id': str(current_user.id)
+            },
+            queue='sessions',
+            priority=5,
+            expires=3600
+        )
 
-    return {
-        "message": "Session end initiated. Processing will continue in background.",
-        "session_id": str(session_id)
-    }
+        logging.info(
+            f"Started session closeout task {task.id} for "
+            f"workroom:{workroom_id} session:{session_id}"
+        )
+
+        return {
+            "message": "Session end processing started",
+            "session_id": str(session_id)
+        }
+
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logging.error(f"Database error during session end: {str(e)}")
+        raise HTTPException(status_code=500, detail="Database error occurred")
+
+    except Exception as e:
+        logging.error(f"Unexpected error ending session: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # --------------------------------------------------------------------------------
@@ -703,13 +727,19 @@ async def analyze_screenshot(
     session_id: UUID,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
 ):
     """
     Receives a screenshot, uploads it to S3, and triggers the image analysis and data storage.
     """
     try:
-        timestamp = datetime.now(timezone.utc)
-        user_id = current_user.id
+        # Validate session exists and is active
+        live_session = await session.get(WorkroomLiveSession, session_id)
+        if not live_session or not live_session.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or not active"
+            )
 
         # Validate file type
         if not file.content_type.startswith("image/"):
@@ -718,48 +748,65 @@ async def analyze_screenshot(
                 detail="Only image files are allowed",
             )
 
-        # Upload to S3
+        timestamp = datetime.now(timezone.utc)
+        file_extension = file.filename.split('.')[-1].lower()
+        
+        # Generate secure filename
         image_filename = (
-            f"user_{user_id}/session_{session_id}/screenshot_"
-            f"{timestamp.strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
+            f"user_{current_user.id}/session_{session_id}/"
+            f"screenshot_{timestamp.strftime('%Y%m%d_%H%M%S')}.{file_extension}"
         )
 
         try:
+            file.file.seek(0)
             s3_client.upload_fileobj(
                 Fileobj=file.file,
                 Bucket=AWS_STORAGE_BUCKET_NAME,
                 Key=image_filename,
-                ExtraArgs={"ContentType": file.content_type, "ACL": "public-read"},
+                ExtraArgs={
+                    'ContentType': file.content_type,
+                    'ACL': 'public-read',
+                    'Metadata': {
+                        'user_id': str(current_user.id),
+                        'session_id': str(session_id)
+                    }
+                }
             )
         except ClientError as e:
-            logging.error(f"S3 upload error: {e}")
+            logging.error(f"S3 upload failed: {str(e)}", exc_info=True)
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"S3 upload error: {str(e)}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to store image"
             )
+        finally:
+            await file.close()
 
         image_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{image_filename}"
 
-        process_image_and_store_task.apply_async(
+        task = process_image_and_store_task.apply_async(
             kwargs={
-                'user_id': str(user_id),
+                'user_id': str(current_user.id),
                 'session_id': str(session_id),
                 'image_url': image_url,
                 'image_filename': image_filename,
                 'timestamp_str': timestamp.isoformat()
-            })
+            },
+            queue='images',
+            priority=6,
+            expires=3600)
 
-        return (
-            {"message": "Screenshot received for processing", "image_url": image_url},
-            status.HTTP_202_ACCEPTED,
-        )
-    except HTTPException as e:
-        raise e
+        return {
+            "message": "Screenshot received for processing", 
+            "image_url": image_url,
+            "task_id": task.id
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error processing screenshot: {e}")
+        logging.error(f"Unexpected error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing screenshot: {str(e)}",
+            detail="An unexpected error occurred",
         )
 
 @workroom_router.post("/analyze_audio")
