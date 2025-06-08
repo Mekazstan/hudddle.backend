@@ -6,9 +6,10 @@ from sqlalchemy import select
 from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
+from app_src.achievements.service import calculate_slacker_points, update_user_level, update_user_levels
 from app_src.db.db_connect import get_session
 from .schema import TaskCreate, TaskSchema, TaskUpdate
-from app_src.db.models import (FriendLink, Task, TaskCollaborator, TaskStatus,
+from app_src.db.models import (FriendLink, LevelCategory, Task, TaskCollaborator, TaskStatus,
                        User, Workroom, WorkroomMemberLink)
 from app_src.auth.dependencies import get_current_user
 
@@ -59,6 +60,10 @@ async def invite_friend_to_task(
     session.add(collaboration)
     await session.commit()
     await session.refresh(collaboration)
+    
+    # ⬇️ Update levels after successful invite
+    await update_user_level(LevelCategory.TEAM_PLAYER, 5, current_user.id, session)
+    
     return {"message": f"Friend {friend.username} invited to task {task.title}"}
 
 @task_router.get("", response_model=List[TaskSchema])
@@ -137,6 +142,9 @@ async def create_task(
 
         await session.commit()
         await session.refresh(new_task)
+        
+        # ⬇️ Update levels after successful task creation
+        await update_user_level(LevelCategory.LEADER, 5, current_user.id, session)
 
         return new_task
 
@@ -196,6 +204,17 @@ async def update_task(
             if user:
                 user.xp += task.task_point
                 await session.flush()
+                
+            # ⬇️ Update levels since task is completed
+            await update_user_level(LevelCategory.WORKAHOLIC, 3, user.id, session)
+
+            # Optional: Add 2 if completed on time
+            if task.completed_at and task.due_date and task.completed_at <= task.due_date:
+                await update_user_level(LevelCategory.WORKAHOLIC, 2, user.id, session)
+
+            # Optional: Penalize for Slacker
+            slacker_penalty = await calculate_slacker_points(user.id, session)
+            await update_user_level(LevelCategory.SLACKER, slacker_penalty, user.id, session)
 
         task.updated_at = datetime.now(timezone.utc)
 
@@ -243,3 +262,4 @@ async def delete_task(task_id: UUID, session: AsyncSession = Depends(get_session
     await session.delete(task)
     await session.commit()
     return {"message": "Task deleted successfully"}
+

@@ -33,7 +33,6 @@ async def check_daily_completion(current_user: User, session: AsyncSession) -> b
     start_of_day = datetime.combine(today, datetime.min.time())
     end_of_day = datetime.combine(today, datetime.max.time())
 
-    # Use SQLAlchemy's `select` instead of SQLModel's `select`
     stmt = select(Task).where(
         Task.created_by_id == current_user.id,
         Task.created_at >= start_of_day,
@@ -47,7 +46,6 @@ async def check_daily_completion(current_user: User, session: AsyncSession) -> b
 
 
 async def get_friends_working_on_task(task_id: UUID, current_user: User, session: AsyncSession) -> List[UUID]:
-    # Use SQLAlchemy's `select` instead of SQLModel's `select`
     stmt = select(TaskCollaborator.user_id).where(
         TaskCollaborator.task_id == task_id,
         TaskCollaborator.user_id != current_user.id,

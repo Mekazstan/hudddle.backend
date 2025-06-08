@@ -6,11 +6,11 @@ from datetime import date, timedelta
 
 
 def determine_level_tier(points: int) -> LevelTier:
-    if points < 50:
+    if points < 500:
         return LevelTier.BEGINNER
-    elif points < 150:
+    elif points < 1500:
         return LevelTier.INTERMEDIATE
-    elif points < 300:
+    elif points < 3000:
         return LevelTier.ADVANCED
     else:
         return LevelTier.EXPERT
@@ -47,9 +47,9 @@ async def calculate_leader_points(user_id, session: AsyncSession):
     return task_creation_points + delegation_points
 
 async def calculate_workaholic_points(user_id, session: AsyncSession):
-    # Task completion: 3 points per task.
+    # Task completion: 5 points per task.
     tasks_completed = await session.execute(select(Task).where(Task.created_by_id == user_id, Task.status == TaskStatus.COMPLETED))
-    task_completion_points = len(tasks_completed.scalars().all()) * 3
+    task_completion_points = len(tasks_completed.scalars().all()) * 5
 
     # On-time completion: 2 bonus points. (Needs completed_at and due_date)
     on_time_completion_points = 0
@@ -72,17 +72,17 @@ async def calculate_team_player_points(user_id, session: AsyncSession):
     return collaboration_points + invite_points
 
 async def calculate_slacker_points(user_id, session: AsyncSession):
-    # Task completion below 20%: -5 points.
+    # Task completion below 20%: +2 points.
     tasks_created = await session.execute(select(Task).where(Task.created_by_id == user_id))
     tasks_completed = await session.execute(select(Task).where(Task.created_by_id == user_id, Task.status == TaskStatus.COMPLETED))
 
     created_count = len(tasks_created.scalars().all())
     completed_count = len(tasks_completed.scalars().all())
     if created_count > 0 and (completed_count / created_count) < 0.2:
-        task_completion_points = -5
+        task_completion_points = +2
     else:
         task_completion_points = 0
-    # Daily active time below 1 hour: -3 points. (Needs activity tracking)
+    # Daily active time below 1 hour: +3 points. (Needs activity tracking)
     # Activity tracking is not implemented.
     active_time_points = 0
 
@@ -119,6 +119,9 @@ async def update_user_streak(user_id, session: AsyncSession):
         user_streak.current_streak += 1
     else:
         user_streak.current_streak = 1
+        
+        # ✅ Award +3 Slacker points for breaking the streak
+        await update_user_level(LevelCategory.SLACKER, 3, user_id, session)
 
     user_streak.last_active_date = today
 
