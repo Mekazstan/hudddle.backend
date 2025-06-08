@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Dict, Any
+from app_src.achievements.service import update_user_streak
 from app_src.db.db_connect import get_session
 from app_src.auth.dependencies import get_current_user
 from app_src.db.models import User, FriendLink, UserStreak, Task, UserLevel
@@ -10,7 +11,6 @@ import cachetools.func
 
 dashboard_router = APIRouter()
 
-@cachetools.func.ttl_cache(maxsize=128, ttl=300)  # Cache for 5 mins
 async def _get_user_friends(session: AsyncSession, user_id: str):
     """
     Fetches and caches a user's friends for 5 minutes.
@@ -68,6 +68,9 @@ async def get_dashboard_data(
     Returns a comprehensive dashboard of user-related data.
     """
     user_id = current_user.id
+    
+    # 🔁 Ensure streak is updated first
+    await update_user_streak(user_id, session)
 
     # Fetch basic user information
     user_data = {
@@ -108,6 +111,8 @@ async def get_dashboard_data(
 
     # Expects 'daily_active_minutes' to be updated regularly from the frontend
     user_data["daily_active_minutes"] = current_user.daily_active_minutes
+    
+    response.headers["Cache-Control"] = "max-age=10"
 
     return user_data
 

@@ -8,7 +8,7 @@ from typing import List
 from uuid import UUID
 from app_src.db.db_connect import get_session
 from .schema import TaskCreate, TaskSchema, TaskUpdate
-from app_src.db.models import (FriendLink, Task, TaskCollaborator,
+from app_src.db.models import (FriendLink, Task, TaskCollaborator, TaskStatus,
                        User, Workroom, WorkroomMemberLink)
 from app_src.auth.dependencies import get_current_user
 
@@ -179,6 +179,8 @@ async def update_task(
                     status_code=403,
                     detail="Not authorized to add tasks to this workroom."
                 )
+                
+        was_previously_completed = task.status == TaskStatus.COMPLETED
 
         # Update task fields
         update_data = task_data.dict(exclude_unset=True)
@@ -187,6 +189,15 @@ async def update_task(
                 # Handle user assignments separately
                 continue
             setattr(task, field, value)
+            
+        # Award XP if status changed to COMPLETED
+        if 'status' in update_data and update_data['status'] == TaskStatus.COMPLETED and not was_previously_completed:
+            user = await session.get(User, task.created_by_id)
+            if user:
+                user.xp += task.task_point
+                await session.flush()
+
+        task.updated_at = datetime.now(timezone.utc)
 
         # Handle assigned users if provided
         if 'assigned_user_ids' in update_data:

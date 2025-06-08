@@ -16,7 +16,7 @@ async def get_user_levels(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    await update_user_levels(current_user.id, session)  # Update levels before returning them.
+    await update_user_levels(current_user.id, session)
     result = await session.execute(select(UserLevel).where(UserLevel.user_id == current_user.id))
     user_levels = result.scalars().all()
     return [
