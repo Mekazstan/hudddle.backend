@@ -5,13 +5,14 @@ from sqlalchemy import func, select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
 from .service import upload_audio_to_s3
 from .schema import (WorkroomCreate, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
 from uuid import UUID
-from app_src.db.models import (UserKPISummary, Workroom, User, 
+from app_src.db.models import (LevelCategory, UserKPISummary, Workroom, User, 
                                Task, TaskStatus, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from app_src.auth.dependencies import get_current_user
@@ -631,6 +632,9 @@ async def create_task_in_workroom(
     session.add(new_task)
     await session.commit()
     await session.refresh(new_task)
+    
+    # ⬇️ Update levels after successful task creation
+    await update_user_level(LevelCategory.LEADER, 5, current_user.id, session)
     return new_task
 
 # Liveworkroom Session Management (Related to Workrooms)
