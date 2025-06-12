@@ -119,7 +119,6 @@ class TaskUpdate(BaseModel):
     
 class MemberMetricSchema(BaseModel):
     kpi_name: str
-    metric_value: int
     weight: int
 
 class FullMemberSchema(BaseModel):

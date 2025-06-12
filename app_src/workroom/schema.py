@@ -5,17 +5,9 @@ from datetime import datetime
 from uuid import UUID
 from app_src.auth.schema import UserSchema
 
-class WorkroomMetricSchema(BaseModel):
-    metric_name: str
-    metric_value: int
-    
-    class Config:
-        from_attributes = True
-
 class WorkroomPerformanceMetricSchema(BaseModel):
-    kpi_name: str
-    metric_value: int = Field(default=1)
-    weight: int = Field(..., gt=0, le=10)
+    kpi_name: str = Field(..., min_length=2, max_length=50)
+    weight: int = Field(..., gt=0, le=10, description="Importance weight 1-10")
     
     model_config = ConfigDict(from_attributes=True)
         
@@ -23,8 +15,6 @@ class WorkroomSchema(BaseModel):
     id: UUID
     name: str
     created_by: UUID
-    kpis: str
-    metrics: Optional[List[WorkroomMetricSchema]] = None
     performance_metrics: List[WorkroomPerformanceMetricSchema] = None
     members: List[UserSchema]
     
@@ -43,14 +33,12 @@ class WorkroomMemberLinkSchema(BaseModel):
     
 class WorkroomCreate(BaseModel):
     name: str = Field(..., min_length=1)
-    kpis: str = None
     performance_metrics: List[WorkroomPerformanceMetricSchema] = []
     friend_emails: List[EmailStr] = []
     
 
 class WorkroomUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
-    kpis: Optional[str] = None
     performance_metrics: Optional[List[WorkroomPerformanceMetricSchema]] = []
     
 

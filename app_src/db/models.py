@@ -4,7 +4,7 @@ from sqlalchemy.orm import relationship, declarative_base
 import sqlalchemy.dialects.postgresql as pg
 from datetime import datetime, date
 from enum import Enum as PyEnum
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 Base = declarative_base()
 
@@ -14,8 +14,8 @@ def create_datetime_column():
 task_assignees = Table(
     "task_assignees",
     Base.metadata,
-    Column("task_id", pg.UUID(as_uuid=True), ForeignKey("tasks.id"), primary_key=True),
-    Column("user_id", pg.UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True),
+    Column("task_id", pg.UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
 )
 
 class TaskStatus(str, PyEnum):
@@ -60,8 +60,8 @@ class FriendLink(Base):
 class WorkroomMemberLink(Base):
     __tablename__ = "workroom_member_links"
     
-    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id"), primary_key=True, nullable=False)
-    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True, nullable=False)
+    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     joined_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     workroom = relationship(
@@ -80,7 +80,7 @@ class TaskCollaborator(Base):
 
     task_id = Column(pg.UUID(as_uuid=True), ForeignKey("tasks.id", ondelete='CASCADE'), primary_key=True)
     user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    invited_by_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'))
+    invited_by_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='SET NULL'))
 
     task = relationship("Task", back_populates="collaborators")
     invited_by = relationship(
@@ -188,24 +188,12 @@ class User(Base):
         back_populates="receiver",
         cascade="all, delete-orphan"
     )
-
-class WorkroomMetric(Base):
-    __tablename__ = "workroom_metrics"
-    id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
-    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete='CASCADE'), nullable=False)
-    metric_name = Column(String, nullable=False)
-    metric_value = Column(Integer, nullable=False)
-    __table_args__ = (
-        UniqueConstraint('workroom_id', 'metric_name', name='_workroom_metric_uc'),
-    )
-    workroom = relationship("Workroom", back_populates="metrics")
     
 class WorkroomPerformanceMetric(Base):
     __tablename__ = "workroom_performance_metrics"
     id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
     workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete='CASCADE'), nullable=False)
     kpi_name = Column(String, nullable=True)
-    metric_value = Column(Integer, nullable=False, default=1)
     user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), nullable=False)
     weight = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -250,7 +238,6 @@ class Workroom(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     name = Column(String, index=True, nullable=False)
     created_by = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), nullable=False)
-    kpis = Column(String, nullable=True)
 
     members = relationship(
         "User",
@@ -272,7 +259,6 @@ class Workroom(Base):
     kpi_metric_history = relationship("WorkroomKPIMetricHistory", back_populates="workroom", cascade="all, delete-orphan")
     kpi_summary = relationship("WorkroomKPISummary", back_populates="workroom", cascade="all, delete-orphan")
     kpi_overall = relationship("WorkroomOverallKPI", back_populates="workroom", cascade="all, delete-orphan")
-    metrics = relationship("WorkroomMetric", back_populates="workroom", cascade="all, delete-orphan")
     performance_metrics = relationship("WorkroomPerformanceMetric", back_populates="workroom", cascade="all, delete-orphan")
     
 class Task(Base):
@@ -360,9 +346,9 @@ class UserKPISummary(Base):
     __tablename__ = "user_kpi_summary"
 
     id = Column(pg.UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id"))
-    session_id = Column(pg.UUID(as_uuid=True), ForeignKey("workroom_live_sessions.id"))
-    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id"))
+    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    session_id = Column(pg.UUID(as_uuid=True), ForeignKey("workroom_live_sessions.id", ondelete="SET NULL"))
+    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete="CASCADE"))
     date = Column(Date, default=datetime.utcnow().date)
     overall_alignment_percentage = Column(Float)
     kpi_breakdown = Column(JSON)
@@ -374,8 +360,8 @@ class UserKPIMetricHistory(Base):
     __tablename__ = "user_kpi_metric_history"
 
     id = Column(pg.UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id"))
-    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id"))
+    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete="CASCADE"))
     kpi_name = Column(String)
     date = Column(Date)
     alignment_percentage = Column(Float)
@@ -384,7 +370,7 @@ class WorkroomKPISummary(Base):
     __tablename__ = "workroom_kpi_summary"
 
     id = Column(pg.UUID(as_uuid=True), primary_key=True, default=uuid4)
-    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id"))
+    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete="CASCADE"))
     date = Column(Date, default=datetime.utcnow().date)
     overall_alignment_percentage = Column(Float)
     kpi_breakdown = Column(JSON)
@@ -396,7 +382,7 @@ class WorkroomKPIMetricHistory(Base):
     __tablename__ = "workroom_kpi_metric_history"
 
     id = Column(pg.UUID(as_uuid=True), primary_key=True, default=uuid4)
-    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id"))
+    workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete="CASCADE"))
     date = Column(Date, default=datetime.utcnow().date)
     kpi_name = Column(String, nullable=False)
     metric_value = Column(Float, nullable=False)

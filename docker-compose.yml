@@ -1,7 +1,7 @@
 services:
   redis:
     container_name: redis
-    image: redis:latest
+    image: redis
     ports:
       - "6379:6379"
   api:
@@ -86,7 +86,7 @@ services:
       - api
   flower:
     container_name: celery_flower
-    image: mher/flower:latest
+    image: mher/flower
     command: celery flower --broker=${CELERY_BROKER_URL} --address=0.0.0.0 --port=5555
     environment:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}

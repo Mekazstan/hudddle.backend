@@ -43,7 +43,7 @@ async def create_user_account(
     session: AsyncSession = Depends(get_session)
 ):
     try:
-        email = user_data.email
+        email = user_data.email.lower()
         user_exists = await user_service.user_exists(email, session)
         if user_exists:
             await session.rollback()
@@ -74,7 +74,7 @@ async def login_user(
     session: AsyncSession = Depends(get_session)
 ):
     try:
-        email = user_login_data.email
+        email = user_login_data.email.lower()
         password = user_login_data.password
         user = await user_service.get_user_by_email(email, session)
         if user is None:

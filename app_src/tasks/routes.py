@@ -212,10 +212,6 @@ async def update_task(
             if task.completed_at and task.due_date and task.completed_at <= task.due_date:
                 await update_user_level(LevelCategory.WORKAHOLIC, 2, user.id, session)
 
-            # Optional: Penalize for Slacker
-            slacker_penalty = await calculate_slacker_points(user.id, session)
-            await update_user_level(LevelCategory.SLACKER, slacker_penalty, user.id, session)
-
         task.updated_at = datetime.now(timezone.utc)
 
         # Handle assigned users if provided

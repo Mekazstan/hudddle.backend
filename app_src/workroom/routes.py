@@ -185,8 +185,7 @@ async def create_workroom(
         # Create the Workroom
         new_workroom = Workroom(
             name=workroom_data.name,
-            created_by=current_user.id,
-            kpis=workroom_data.kpis
+            created_by=current_user.id
         )
         session.add(new_workroom)
         await session.flush()
@@ -196,7 +195,6 @@ async def create_workroom(
             session.add(WorkroomPerformanceMetric(
                 workroom_id=new_workroom.id,
                 kpi_name=pm_data.kpi_name,
-                metric_value=pm_data.metric_value,
                 user_id=current_user.id,
                 weight=pm_data.weight,
             ))
@@ -239,7 +237,6 @@ async def create_workroom(
             select(Workroom)
             .where(Workroom.id == new_workroom.id)
             .options(
-                selectinload(Workroom.metrics),
                 selectinload(Workroom.performance_metrics),
                 selectinload(Workroom.members)
             )
@@ -279,8 +276,7 @@ async def update_workroom(
         .where(Workroom.id == workroom_id)
         .options(
             selectinload(Workroom.performance_metrics),
-            selectinload(Workroom.members),
-            selectinload(Workroom.metrics)
+            selectinload(Workroom.members)
         )
     )
     
@@ -301,9 +297,6 @@ async def update_workroom(
     if "name" in update_data:
         workroom.name = update_data["name"]
 
-    if "kpis" in update_data:
-        workroom.kpis = update_data["kpis"]
-
     if "performance_metrics" in update_data:
         # Clear existing performance metrics
         await session.execute(
@@ -316,7 +309,6 @@ async def update_workroom(
             pm = WorkroomPerformanceMetric(
                 workroom_id=workroom_id,
                 kpi_name=pm_data.kpi_name,
-                metric_value=pm_data.metric_value,
                 user_id=current_user.id,
                 weight=pm_data.weight,
             )
@@ -378,7 +370,6 @@ async def get_workroom_details(
             complete_metrics.append(
                 MemberMetricSchema(
                     kpi_name=kpi_name,
-                    metric_value=metric_data.get("metric_value", 0),
                     weight=metric_data.get("weight", 0),
                 )
             )
@@ -400,7 +391,7 @@ async def get_workroom_details(
                 daily_active_minutes=member.daily_active_minutes,
                 teamwork_collaborations=member.teamwork_collaborations,
                 metrics=metrics_by_user.get(member.id, [
-                    MemberMetricSchema(kpi_name=kpi_name, metric_value=0, weight=0)
+                    MemberMetricSchema(kpi_name=kpi_name, weight=0)
                     for kpi_name in expected_kpis
                 ])
             )
@@ -437,7 +428,6 @@ async def get_workroom_details(
     return WorkroomDetailsSchema(
         id=workroom.id,
         name=workroom.name,
-        kpis=workroom.kpis,
         members=full_members,
         completed_task_count=completed_task_count,
         pending_task_count=pending_task_count,
@@ -460,12 +450,71 @@ async def delete_workroom(
     await session.commit()
     return {"message": "Workroom deleted successfully"}
 
+
+@workroom_router.get("/{workroom_id}/active-session")
+async def get_workroom_active_session(
+    workroom_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get the active session for a workroom (where is_active == True).
+    Only the workroom creator can access this endpoint.
+    Returns the session details and owner email.
+    Returns 404 if no active session exists.
+    """
+    # First verify the user is the creator of this workroom
+    workroom = await session.get(Workroom, workroom_id)
+    if not workroom:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workroom not found"
+        )
+    
+    if workroom.created_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workroom creator can access active sessions"
+        )
+
+    # Get the active session
+    active_session = await session.execute(
+        select(WorkroomLiveSession)
+        .where(
+            WorkroomLiveSession.workroom_id == workroom_id,
+            WorkroomLiveSession.is_active == True
+        )
+        .limit(1)
+    )
+    
+    active_session = active_session.scalar_one_or_none()
+    
+    if not active_session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active session found for this workroom"
+        )
+
+    # Get the session owner's email
+    session_owner_email = None
+    if active_session.screen_sharer_id:
+        owner = await session.get(User, active_session.screen_sharer_id)
+        session_owner_email = owner.email if owner else None
+
+    return {
+        "session_id": active_session.id,
+        "workroom_id": active_session.workroom_id,
+        "start_time": active_session.start_time,
+        "is_active": active_session.is_active,
+        "session_owner_email": session_owner_email
+    }
+
 # Membership Management
 
 @workroom_router.post("/{workroom_id}/members")
 async def add_members_to_workroom(
     workroom_id: UUID,
-    user_ids: List[UUID],
+    emails: List[str] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -476,17 +525,54 @@ async def add_members_to_workroom(
         raise HTTPException(status_code=404, detail="Workroom not found")
     if workroom.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to add members to this workroom")
-    for user_id in user_ids:
-        user = await session.get(User, user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found")
-        if user in workroom.members:
-            continue
-        workroom.members.append(user)
+    
+    # Track emails of users not found in database
+    non_member_emails = []
+    
+    for email in emails:
+        # Convert email to lowercase
+        email_lower = email.lower()
+        
+        # Find user by email
+        user = (await session.execute(
+            select(User).where(func.lower(User.email) == email_lower)
+        )).scalar_one_or_none()
+        
+        if user:
+            # Check if user is already a member
+            existing_member = (await session.execute(
+                select(WorkroomMemberLink).where(
+                    WorkroomMemberLink.workroom_id == workroom_id,
+                    WorkroomMemberLink.user_id == user.id
+                )
+            )).scalar_one_or_none()
+            
+            if not existing_member:
+                # Add user to workroom
+                session.add(WorkroomMemberLink(
+                    workroom_id=workroom_id,
+                    user_id=user.id
+                ))
+        else:
+            non_member_emails.append(email_lower)
 
     await session.commit()
+    
+    # Send invites to non-member emails if any
+    if non_member_emails:
+        send_workroom_invites.delay(
+            workroom_name=workroom.name,
+            creator_name=current_user.first_name or "Someone",
+            recipient_emails=non_member_emails
+        )
+    
+    # Refresh and return updated workroom
     await session.refresh(workroom)
-    return workroom
+    return {
+        "message": "Members added successfully",
+        "workroom": workroom,
+        "non_member_emails": non_member_emails
+    }
 
 @workroom_router.get("/{workroom_id}/members")
 async def get_workroom_members(
@@ -537,7 +623,6 @@ async def get_workroom_members(
             metric_schemas.append(
                 MemberMetricSchema(
                     kpi_name=kpi_name,
-                    metric_value=kpi_data.get("metric_value", 0),
                     weight=kpi_data.get("weight", 0),
                 )
             )

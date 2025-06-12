@@ -265,19 +265,29 @@ async def process_image_and_store_task(
     """
     timestamp = datetime.fromisoformat(timestamp_str)
 
-    # Retrieve the live session
-    workroom_live_session = await session.get(WorkroomLiveSession, session_id)
+    # Retrieve the live session with workroom relationship loaded
+    workroom_live_session = await session.execute(
+        select(WorkroomLiveSession)
+        .options(selectinload(WorkroomLiveSession.workroom)
+        .selectinload(Workroom.performance_metrics))
+        .where(WorkroomLiveSession.id == session_id)
+    )
+    workroom_live_session = workroom_live_session.scalar_one_or_none()
+    
     if not workroom_live_session:
         logging.warning(f"Live session not found: {session_id}")
         return
 
-    # Retrieve the associated workroom
-    workroom = await session.get(Workroom, workroom_live_session.workroom_id)
+    workroom = workroom_live_session.workroom
     if not workroom:
-        logging.warning(f"Workroom not found: {workroom_live_session.workroom_id}")
+        logging.warning(f"Workroom not found for session: {session_id}")
         return
 
-    workroom_kpis = workroom.kpis or ""
+    # Get all KPI names from performance metrics
+    kpi_names = [metric.kpi_name for metric in workroom.performance_metrics]
+    
+    # Format KPIs for the prompt
+    workroom_kpis = ", ".join(kpi_names) if kpi_names else "productivity"
 
     # Perform image analysis
     analysis_result = await analyze_image(image_url, workroom_kpis)
@@ -343,9 +353,6 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
 
     User Activities:
     {activity_summaries}
-
-    The primary KPI (Key Performance Indicator) for this workroom is:
-    "{workroom.kpis}"
 
     Below are the detailed performance metrics associated with this KPI:
     {kpi_metrics_text}
@@ -461,7 +468,6 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
 #   KPI Functions
 #   --------------------------------------------------------------------------------
 async def generate_summary_text(
-    primary_kpi: str,
     all_summary_texts: str,
     average_alignment: float,
     combined_kpi_breakdown: dict[str, float],
@@ -473,9 +479,6 @@ async def generate_summary_text(
 
     prompt = f"""
     You are a productivity analyst AI. Your job is to help a manager understand how their team performed in a remote workroom session.
-
-    The primary KPI of the workroom is:
-    "{primary_kpi}"
 
     The team's **average alignment score** with this KPI was: {round(average_alignment, 2)}%
 
@@ -546,19 +549,18 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSessi
             kpi_name=kpi_name,
             metric_value=round(value, 2)
         ))
-    if workroom.kpis:
-        session.add(WorkroomKPIMetricHistory(
-            workroom_id=workroom_id,
-            date=today,
-            kpi_name=workroom.kpis,
-            metric_value=round(average_alignment, 2)
-        ))
+    # if workroom.kpis:
+    #     session.add(WorkroomKPIMetricHistory(
+    #         workroom_id=workroom_id,
+    #         date=today,
+    #         kpi_name=workroom.kpis,
+    #         metric_value=round(average_alignment, 2)
+    #     ))
 
     all_summary_texts = " ".join(s.summary_text for s in summaries)
 
     # Call LLM to generate the final managerial summary
     generated_summary = await generate_summary_text(
-        workroom.kpis,
         all_summary_texts,
         average_alignment,
         dict(combined_kpi_breakdown)
