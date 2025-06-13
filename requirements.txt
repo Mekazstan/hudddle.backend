@@ -10,7 +10,6 @@ groq
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
-fastapi
 fastapi-mail
 fastapi[standard]
 itsdangerous

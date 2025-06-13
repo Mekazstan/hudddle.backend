@@ -137,7 +137,6 @@ class FullMemberSchema(BaseModel):
 class WorkroomDetailsSchema(BaseModel):
     id: UUID
     name: str
-    kpis: Optional[str]
     members: List[FullMemberSchema]
     completed_task_count: int
     pending_task_count: int
