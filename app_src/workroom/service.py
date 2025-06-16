@@ -148,13 +148,13 @@ async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
         live_session_count = live_sessions_result.scalar() or 0
         live_session_points = live_session_count * 2
 
-        activity_boost = float(member.productivity or 0) * 0.2
+        # activity_boost = float(member.productivity or 0) * 0.2
         active_minutes_score = (member.daily_active_minutes or 0) / 30
 
         # ✅ Streak bonus using current_streak
         streak_bonus = member.streak.current_streak * 0.5 if member.streak else 0.0
 
-        engagement_score = live_session_points + activity_boost + active_minutes_score + streak_bonus
+        engagement_score = live_session_points + active_minutes_score + streak_bonus
 
         # 4. Penalty Score
         missed_tasks_result = await session.execute(
@@ -217,22 +217,28 @@ async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
 #  Image Analysis Functions
 # --------------------------------------------------------------------------------
 
-async def analyze_image(image_url: str, workroom_kpis: str) -> str:
+async def analyze_image(image_url: str, kpi_names: set) -> str:
     """
     Analyzes the image using Groq API and returns a plain text description.
     """
     try:
+        if not kpi_names:
+            kpi_names = {"productivity", "focus", "collaboration"}
+            
+        kpi_list = ", ".join(kpi_names)
+        
         prompt_content = [
             {
                 "type": "text",
                 "text": (
-                    "You are analyzing a screenshot of a remote worker's screen. "
-                    "Describe the applications and activities visible. Mention any observations "
-                    "that relate to the following KPIs: "
-                    f"{workroom_kpis}. "
-                    "Avoid performance metrics or unrelated details. "
-                    "Your response should be plain, readable text (not in JSON or any other format)."
-                    "And kepp it short and concise to no more than 100 words."
+                    "Analyze this screenshot of a user's work session. Focus on identifying activities that relate "
+                    "to these specific performance metrics: " + kpi_list + ". "
+                    "Describe what applications/tools are visible and how they're being used. "
+                    "Note any signs of productive work, collaboration, or distractions. "
+                    "For example, if you see coding tools, document editors, communication apps, "
+                    "or entertainment sites, mention how they relate to the KPIs. "
+                    "Keep your response concise (50-100 words) and directly relevant to work performance. "
+                    "Format as plain text with no special formatting or bullet points."
                 )
             },
             {"type": "image_url", "image_url": {"url": image_url}},
@@ -242,7 +248,7 @@ async def analyze_image(image_url: str, workroom_kpis: str) -> str:
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=[{"role": "user", "content": prompt_content}],
             temperature=0.5,
-            max_completion_tokens=500,
+            max_completion_tokens=200,
         )
 
         analysis_text = completion.choices[0].message.content
@@ -320,15 +326,22 @@ async def store_analysis_result(analysis_text: str, original_image_key: str) -> 
         return False
 
 async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, user_id: UUID, db: AsyncSession):
-    # Get session
+    # Get session and user details
     session_obj = await db.get(WorkroomLiveSession, session_id)
     if not session_obj:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Eagerly load workroom + relationships to avoid lazy load issues
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Eagerly load workroom with performance metrics
     result = await db.execute(
         select(Workroom)
-        .options(selectinload(Workroom.performance_metrics))
+        .options(
+            selectinload(Workroom.performance_metrics),
+            selectinload(Workroom.created_by_user)
+        )
         .where(Workroom.id == workroom_id)
     )
     workroom = result.scalar_one_or_none()
@@ -339,185 +352,195 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
     all_activities = await get_all_analysis_results(user_id, session_id)
     if not all_activities:
         raise HTTPException(status_code=404, detail="No analysis results found")
-    logging.info(f"Activities found: {len(all_activities)}")
 
-    # Prepare LLM prompt
-    activity_summaries = all_activities
-    kpi_metrics = [f"- {pm.kpi_name}: weight-{pm.weight}" for pm in workroom.performance_metrics]
-    kpi_metrics_text = "\n".join(kpi_metrics)
+    # Prepare KPI metrics with weights
+    kpi_metrics = [
+        {
+            "name": pm.kpi_name,
+            "weight": pm.weight,
+            "description": f"Importance: {pm.weight}/10"
+        } 
+        for pm in workroom.performance_metrics
+    ]
 
+    # Prepare LLM prompt with personalized context
     prompt = f"""
-    You are an AI assistant helping evaluate user performance in a remote workroom session.
+    You are an AI performance analyst evaluating a team member's work session.
 
-    You are given a list of user activities detected from screenshots and audio recordings during the session:
+    Team Member: {user.first_name} {user.last_name}
+    Workroom: {workroom.name}
+    Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
 
-    User Activities:
-    {activity_summaries}
+    Below are the performance metrics for this workroom with their importance weights:
+    {json.dumps(kpi_metrics, indent=2)}
 
-    Below are the detailed performance metrics associated with this KPI:
-    {kpi_metrics_text}
+    Here are the detected activities from {user.first_name}'s session:
+    {json.dumps(all_activities, indent=2)}
 
-    Your task is to assess how well the user's activities during the session align with the primary KPI and the individual performance metrics.
+    Your task:
+    1. Write a concise 3-4 sentence summary of {user.first_name}'s performance, highlighting:
+       - Positive behaviors aligned with KPIs
+       - Areas needing improvement
+       - Overall work quality
+    2. For each KPI, provide an alignment percentage (0-100) based on:
+       - Time spent on relevant activities
+       - Quality of engagement
+       - Weight/importance of the KPI
 
-    Return the following:
+    Return a JSON object with this exact structure:
+    {{
+        "summary_text": "Your summary here...",
+        "kpi_breakdown": [
+            {{
+                "kpi_name": "KPI Name",
+                "percentage": 85.0
+            }},
+            ...
+        ]
+    }}
 
-    1. A brief, natural language summary of the session (focusing on user behavior and alignment with the KPI) Write this like you are writing to the team member's manager.
-    2. An overall alignment percentage (0 to 100) reflecting how well the user's activities align with the main KPI.
-    3. Don't say anything regarding confidence scores just respond like a human accessing the user's activities.
-    4. A breakdown of each performance metric, including:
-    - the metric's name
-    - a percentage (0 to 100) indicating the user's alignment with it.
-
-    ⚠️ Strictly return the response as a **valid JSON object** matching this schema:
-
-    {UserDailyKPIReport.schema_json(indent=2)}
-
-    ⚠️ Do NOT include any additional text or explanations. Only the JSON object.
-
-    Ensure the percentages are numerical values, not strings, and that keys match the schema exactly.
+    Important:
+    - Only return valid JSON
+    - Include all KPIs in the breakdown
+    - Percentages should be floats
+    - Be objective but constructive
     """
 
     # LLM Completion Call
     try:
-        # Send the request to the LLM model
         completion = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.4,
-            max_completion_tokens=500
+            temperature=0.3,
+            response_format={"type": "json_object"},
+            max_completion_tokens=800
         )
 
-        # Get the response content
+        # Parse and validate response
         result = completion.choices[0].message.content
+        summary_data = UserDailyKPIReport.parse_raw(result)
+        
+        # Calculate overall alignment percentage (weighted average)
+        total_weight = sum(pm.weight for pm in workroom.performance_metrics)
+        weighted_sum = 0.0
+        
+        for kpi in summary_data.kpi_breakdown:
+            # Find matching performance metric to get weight
+            pm = next((pm for pm in workroom.performance_metrics 
+                      if pm.kpi_name == kpi.kpi_name), None)
+            if pm:
+                weighted_sum += (kpi.percentage * pm.weight)
+        
+        overall_alignment = weighted_sum / total_weight if total_weight > 0 else 0
 
-        # Step 1: Remove leading and trailing backticks
-        cleaned_result = result.strip("`").strip()
-
-        # Step 2: Parse the cleaned result as JSON
-        try:
-            summary_data = UserDailyKPIReport.parse_raw(cleaned_result)
-            logging.info(f"LLM summary result: {summary_data}")
-        except json.JSONDecodeError as e:
-            logging.error(f"LLM JSON decode error: {e} - {cleaned_result}")
-            raise HTTPException(status_code=500, detail="LLM summary parse failed")
-
-    except Exception as e:
-        logging.error(f"LLM response parse error: {e} - {result}")
-        raise HTTPException(status_code=500, detail="LLM summary parse failed")
-
-    existing_summary = await db.execute(
-        select(UserKPISummary)
-        .where(UserKPISummary.user_id == user_id, 
-               UserKPISummary.workroom_id == workroom.id,
-               UserKPISummary.session_id == session_id)
-    )
-    existing_summary = existing_summary.scalar_one_or_none()
-
-    if existing_summary:
-        # If it exists, update the existing entry
-        existing_summary.overall_alignment_percentage = summary_data.overall_alignment_percentage
-        existing_summary.kpi_breakdown = {k.kpi_name: k.percentage for k in summary_data.kpi_breakdown}
-        existing_summary.summary_text = summary_data.summary_text
-        existing_summary.date = session_obj.ended_at.date() if session_obj.ended_at else datetime.utcnow().date()
-    else:
-        # If not found, create a new entry
-        new_summary = UserKPISummary(
-            user_id=user_id,
-            session_id=session_id,
-            workroom_id=workroom.id,
-            overall_alignment_percentage=summary_data.overall_alignment_percentage,
-            kpi_breakdown={k.kpi_name: k.percentage for k in summary_data.kpi_breakdown},
-            summary_text=summary_data.summary_text,
-            date=session_obj.ended_at.date() if session_obj.ended_at else datetime.utcnow().date()
+        # Upsert UserKPISummary
+        existing_summary = await db.execute(
+            select(UserKPISummary)
+            .where(
+                UserKPISummary.user_id == user_id,
+                UserKPISummary.workroom_id == workroom.id,
+                UserKPISummary.session_id == session_id
+            )
         )
-        db.add(new_summary)
+        existing_summary = existing_summary.scalar_one_or_none()
 
-    # Save KPI Breakdown History
-    today = datetime.utcnow().date()
+        if existing_summary:
+            existing_summary.overall_alignment_percentage = overall_alignment
+            existing_summary.kpi_breakdown = {k.kpi_name: k.percentage for k in summary_data.kpi_breakdown}
+            existing_summary.summary_text = summary_data.summary_text
+        else:
+            new_summary = UserKPISummary(
+                user_id=user_id,
+                session_id=session_id,
+                workroom_id=workroom.id,
+                overall_alignment_percentage=overall_alignment,
+                kpi_breakdown={k.kpi_name: k.percentage for k in summary_data.kpi_breakdown},
+                summary_text=summary_data.summary_text,
+                date=session_obj.ended_at.date() if session_obj.ended_at else datetime.utcnow().date()
+            )
+            db.add(new_summary)
 
-    # Save or Update KPI Breakdown History
-    for kpi in summary_data.kpi_breakdown:
-        # Check for existing entry
-        existing_entry = await db.execute(
+        # Save individual KPI metrics to history
+        today = datetime.utcnow().date()
+        # for kpi in summary_data.kpi_breakdown:
+        #     # Check for existing entry
+        #     existing_entry = await db.execute(
+        #         select(UserKPIMetricHistory).where(
+        #             UserKPIMetricHistory.user_id == user_id,
+        #             UserKPIMetricHistory.workroom_id == workroom.id,
+        #             UserKPIMetricHistory.kpi_name == kpi.kpi_name,
+        #             UserKPIMetricHistory.date == today
+        #         )
+        #     )
+        #     existing_entry = existing_entry.scalars().first()
+
+        #     if existing_entry:
+        #         existing_entry.alignment_percentage = kpi.percentage
+        #     else:
+        #         db.add(UserKPIMetricHistory(
+        #             user_id=user_id,
+        #             workroom_id=workroom.id,
+        #             kpi_name=kpi.kpi_name,
+        #             alignment_percentage=kpi.percentage,
+        #             date=today
+        #         ))
+
+        # Save overall alignment to history
+        overall_kpi_name = f"{today} - Overall Alignment"
+        existing_overall_history = await db.execute(
             select(UserKPIMetricHistory).where(
                 UserKPIMetricHistory.user_id == user_id,
                 UserKPIMetricHistory.workroom_id == workroom.id,
-                UserKPIMetricHistory.kpi_name == kpi.kpi_name,
+                UserKPIMetricHistory.kpi_name == overall_kpi_name,
                 UserKPIMetricHistory.date == today
             )
         )
-        existing_entry = existing_entry.scalars().first()
+        existing_overall_history = existing_overall_history.scalar_one_or_none()
 
-        if existing_entry:
-            # Update existing entry
-            existing_entry.alignment_percentage = kpi.percentage
+        if existing_overall_history:
+            existing_overall_history.alignment_percentage = overall_alignment
         else:
-            # Create new entry
             db.add(UserKPIMetricHistory(
                 user_id=user_id,
                 workroom_id=workroom.id,
-                kpi_name=kpi.kpi_name,
-                alignment_percentage=kpi.percentage,
+                kpi_name=overall_kpi_name,
+                alignment_percentage=overall_alignment,
                 date=today
             ))
 
-    await db.commit()
-    return summary_data
+        await db.commit()
+        return summary_data
+
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Error generating KPI summary: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate performance summary"
+        )
 
 #   --------------------------------------------------------------------------------
 #   KPI Functions
 #   --------------------------------------------------------------------------------
-async def generate_summary_text(
-    all_summary_texts: str,
-    average_alignment: float,
-    combined_kpi_breakdown: dict[str, float],
-) -> str:
-    # Format breakdown into readable bullet points
-    kpi_breakdown_text = "\n".join(
-        f"- {kpi}: {round(score, 2)}%" for kpi, score in combined_kpi_breakdown.items()
-    )
-
-    prompt = f"""
-    You are a productivity analyst AI. Your job is to help a manager understand how their team performed in a remote workroom session.
-
-    The team's **average alignment score** with this KPI was: {round(average_alignment, 2)}%
-
-    The **aggregated KPI breakdown** across all users is:
-    {kpi_breakdown_text}
-
-    Below are detailed summaries for each user (generated by AI based on screenshots and session activity):
-    {all_summary_texts}
-
-    Using the data above:
-    1. Write a concise, professional summary for the manager about how the team performed.
-    2. Highlight strengths and any concerning patterns.
-    3. Offer 1-2 useful suggestions or recommendations for the manager.
-    4. Make sure your tone is informative and not judgmental.
-
-    Only return the summary. Do not include any additional markup or headers.
-    """
-
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_completion_tokens=500
-        )
-        result = response.choices[0].message.content.strip()
-        return result
-
-    except Exception as e:
-        logging.error(f"Failed to generate workroom KPI summary: {e}")
-        return "Summary generation failed due to an internal error."
 
 async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSession):
+    # Get workroom and today's date
     workroom = await session.get(Workroom, workroom_id)
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
 
     today = datetime.utcnow().date()
 
+    # Check if summary already exists for today
+    existing_summary = await session.execute(
+        select(WorkroomKPISummary).where(
+            WorkroomKPISummary.workroom_id == workroom_id,
+            WorkroomKPISummary.date == today
+        )
+    )
+    existing_summary = existing_summary.scalar_one_or_none()
+
+    # Get all user summaries for today
     summaries_result = await session.execute(
         select(UserKPISummary).where(
             UserKPISummary.workroom_id == workroom_id,
@@ -527,57 +550,122 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSessi
     summaries = summaries_result.scalars().all()
 
     if not summaries:
-        raise HTTPException(status_code=404, detail="No KPI summaries found for today.")
+        raise HTTPException(status_code=404, detail="No KPI summaries found for today")
 
+    # Calculate averages
     total_alignment = sum(s.overall_alignment_percentage for s in summaries)
     average_alignment = total_alignment / len(summaries)
 
-    combined_kpi_breakdown = defaultdict(float)
+    # Calculate average KPI breakdown
+    combined_kpi_breakdown = defaultdict(list)
     for summary in summaries:
-        for kpi_name, percentage in summary.kpi_breakdown.items():
-            combined_kpi_breakdown[kpi_name] += percentage
+        if summary.kpi_breakdown:
+            for kpi_name, percentage in summary.kpi_breakdown.items():
+                combined_kpi_breakdown[kpi_name].append(percentage)
 
-    # Average the scores
-    for kpi in combined_kpi_breakdown:
-        combined_kpi_breakdown[kpi] /= len(summaries)
+    averaged_kpi_breakdown = {
+        kpi_name: sum(values) / len(values)
+        for kpi_name, values in combined_kpi_breakdown.items()
+    }
 
-    # Store in WorkroomKPIMetricHistory
-    for kpi_name, value in combined_kpi_breakdown.items():
+    # Generate summary text using LLM
+    all_summary_texts = [s.summary_text for s in summaries if s.summary_text]
+    llm_prompt = f"""
+    You are analyzing daily performance summaries for an entire workroom team.
+    Below are individual member summaries from today:
+
+    Member Summaries:
+    {chr(10).join(all_summary_texts)}
+
+    Key Metrics:
+    - Overall Alignment: {round(average_alignment, 2)}%
+    - KPI Breakdown: {json.dumps(averaged_kpi_breakdown, indent=2)}
+
+    Generate a concise 3-4 paragraph executive summary highlighting:
+    1. Overall team performance today
+    2. Key strengths and areas for improvement
+    3. Notable individual contributions (mention names if particularly good/bad)
+    4. Recommendations for tomorrow
+
+    Write in professional but approachable tone for managers.
+    Focus on patterns and team-level insights rather than individual details.
+    """
+    
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": llm_prompt}],
+            temperature=0.5,
+            max_completion_tokens=500
+        )
+        generated_summary = completion.choices[0].message.content
+    except Exception as e:
+        logging.error(f"LLM summary generation failed: {e}")
+        generated_summary = "Automatic summary unavailable. Please check individual member reports."
+
+    # Update or create WorkroomKPISummary
+    if existing_summary:
+        existing_summary.overall_alignment_percentage = average_alignment
+        existing_summary.kpi_breakdown = averaged_kpi_breakdown
+        existing_summary.summary_text = generated_summary
+    else:
+        session.add(WorkroomKPISummary(
+            workroom_id=workroom_id,
+            date=today,
+            overall_alignment_percentage=average_alignment,
+            kpi_breakdown=averaged_kpi_breakdown,
+            summary_text=generated_summary
+        ))
+
+    # Update WorkroomKPIMetricHistory
+    # First check for existing entries
+    existing_metrics = await session.execute(
+        select(WorkroomKPIMetricHistory).where(
+            WorkroomKPIMetricHistory.workroom_id == workroom_id,
+            WorkroomKPIMetricHistory.date == today
+        )
+    )
+    existing_metrics = existing_metrics.scalars().all()
+
+    # Update or create metric entries
+    for kpi_name, value in averaged_kpi_breakdown.items():
+        existing_metric = next(
+            (m for m in existing_metrics if m.kpi_name == kpi_name),
+            None
+        )
+        if existing_metric:
+            existing_metric.metric_value = round(value, 2)
+        else:
+            session.add(WorkroomKPIMetricHistory(
+                workroom_id=workroom_id,
+                date=today,
+                kpi_name=kpi_name,
+                metric_value=round(value, 2)
+            ))
+
+    # Add overall alignment metric
+    overall_metric_name = f"{today} - Overall Alignment"
+    overall_metric = next(
+        (m for m in existing_metrics if m.kpi_name == overall_metric_name),
+        None
+    )
+    if overall_metric:
+        overall_metric.metric_value = round(average_alignment, 2)
+    else:
         session.add(WorkroomKPIMetricHistory(
             workroom_id=workroom_id,
             date=today,
-            kpi_name=kpi_name,
-            metric_value=round(value, 2)
+            kpi_name=overall_metric_name,
+            metric_value=round(average_alignment, 2)
         ))
-    # if workroom.kpis:
-    #     session.add(WorkroomKPIMetricHistory(
-    #         workroom_id=workroom_id,
-    #         date=today,
-    #         kpi_name=workroom.kpis,
-    #         metric_value=round(average_alignment, 2)
-    #     ))
 
-    all_summary_texts = " ".join(s.summary_text for s in summaries)
-
-    # Call LLM to generate the final managerial summary
-    generated_summary = await generate_summary_text(
-        all_summary_texts,
-        average_alignment,
-        dict(combined_kpi_breakdown)
+    # Update WorkroomOverallKPI
+    existing_kpi = await session.execute(
+        select(WorkroomOverallKPI).where(
+            WorkroomOverallKPI.workroom_id == workroom_id
+        )
     )
-
-    session.add(WorkroomKPISummary(
-        workroom_id=workroom_id,
-        date=today,
-        overall_alignment_percentage=average_alignment,
-        kpi_breakdown=dict(combined_kpi_breakdown),
-        summary_text=generated_summary
-    ))
-
-    existing_kpi_result = await session.execute(
-        select(WorkroomOverallKPI).where(WorkroomOverallKPI.workroom_id == workroom_id)
-    )
-    existing_kpi = existing_kpi_result.scalar_one_or_none()
+    existing_kpi = existing_kpi.scalar_one_or_none()
 
     if existing_kpi:
         existing_kpi.overall_alignment_score = average_alignment
@@ -590,8 +678,9 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSessi
     await session.commit()
 
     return {
+        "date": today.isoformat(),
         "overall_alignment": round(average_alignment, 2),
-        "kpi_breakdown": {k: round(v, 2) for k, v in combined_kpi_breakdown.items()},
+        "kpi_breakdown": {k: round(v, 2) for k, v in averaged_kpi_breakdown.items()},
         "summary_text": generated_summary
     }
 

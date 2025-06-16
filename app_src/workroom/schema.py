@@ -85,7 +85,6 @@ class KPIBreakdown(BaseModel):
 
 class UserDailyKPIReport(BaseModel):
     summary_text: str
-    overall_alignment_percentage: float
     kpi_breakdown: List[KPIBreakdown]
 
 class WorkroomKPIMetricHistorySchema(BaseModel):
@@ -112,6 +111,14 @@ class UserKPISummarySchema(BaseModel):
     overall_alignment_percentage: float
     summary_text: Optional[str]
     kpi_breakdown: List[MemberMetricSchema]
+    
+class LeaderboardEntrySchema(BaseModel):
+    score: int
+    rank: int
+    kpi_score: float
+    task_score: int
+    teamwork_score: Optional[int] = None
+    engagement_score: Optional[int] = None
 
 class FullMemberSchema(BaseModel):
     id: UUID
@@ -126,6 +133,7 @@ class FullMemberSchema(BaseModel):
     teamwork_collaborations: int
     kpi_summary: Optional[UserKPISummarySchema] = None
     kpi_metric_history: List[UserKPIMetricHistorySchema] = []
+    leaderboard_entry: Optional[LeaderboardEntrySchema] = None
 
 class WorkroomDetailsSchema(BaseModel):
     id: UUID

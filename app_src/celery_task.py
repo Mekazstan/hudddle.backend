@@ -240,8 +240,15 @@ def process_image_and_store_task(self, user_id: str, session_id: str, image_url:
                     logger.warning(f"Workroom not found for session: {session_id}")
                     return None
                 
+                # Get all performance metrics for this workroom
+                performance_metrics = await session.execute(
+                    select(WorkroomPerformanceMetric)
+                    .where(WorkroomPerformanceMetric.workroom_id == workroom.id)
+                )
+                kpi_names = {metric.kpi_name for metric in performance_metrics.scalars()}
+                
                 # Process image
-                analysis_result = await analyze_image(image_url, workroom.kpis or {})
+                analysis_result = await analyze_image(image_url, kpi_names)
                 if not analysis_result:
                     logger.warning(f"Image analysis failed for {image_url}")
                     return None

@@ -8,11 +8,11 @@ from sqlalchemy.orm import selectinload
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
 from .service import upload_audio_to_s3
-from .schema import (FullMemberSchema, MemberMetricSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomCreate, WorkroomDetailsSchema, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
+from .schema import (FullMemberSchema, LeaderboardEntrySchema, MemberMetricSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomCreate, WorkroomDetailsSchema, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
 from uuid import UUID
-from app_src.db.models import (LevelCategory, UserKPIMetricHistory, UserKPISummary, Workroom, User, 
+from app_src.db.models import (Leaderboard, LevelCategory, UserKPIMetricHistory, UserKPISummary, Workroom, User, 
                                Task, TaskStatus, WorkroomKPIMetricHistory, WorkroomKPISummary, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from app_src.auth.dependencies import get_current_user
@@ -106,13 +106,12 @@ async def initialize_kpi_data_for_workroom(session, workroom: Workroom, members:
     ))
 
     # 2. Create default WorkroomKPIMetricHistory entries
-    for kpi in kpi_names:
-        session.add(WorkroomKPIMetricHistory(
-            workroom_id=workroom.id,
-            kpi_name=kpi,
-            date=today,
-            metric_value=0.0
-        ))
+    session.add(WorkroomKPIMetricHistory(
+        workroom_id=workroom.id,
+        kpi_name=f"{today} - Overall Alignment",
+        date=today,
+        metric_value=0.0
+    ))
 
     # 3. For each user: UserKPISummary + UserKPIMetricHistory
     for member in members:
@@ -124,14 +123,14 @@ async def initialize_kpi_data_for_workroom(session, workroom: Workroom, members:
             summary_text=f"No summary for {member.first_name or 'User'}",
             kpi_breakdown=[{"kpi_name": kpi, "percentage": 0, "weight": weight} for kpi, weight in zip(kpi_names, kpi_weight)]
         ))
-        for kpi in kpi_names:
-            session.add(UserKPIMetricHistory(
-                user_id=member.id,
-                workroom_id=workroom.id,
-                kpi_name=kpi,
-                date=today,
-                alignment_percentage=0.0
-            ))
+
+        session.add(UserKPIMetricHistory(
+            user_id=member.id,
+            workroom_id=workroom.id,
+            kpi_name=f"{today} - Overall Alignment",
+            date=today,
+            alignment_percentage=0.0
+        ))
 
 # Workroom Endpoints
 
@@ -380,8 +379,16 @@ async def get_workroom_details(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    # Fetch the workroom
-    workroom = await session.get(Workroom, workroom_id)
+    # Fetch the workroom with leaderboard relationships
+    workroom_result = await session.execute(
+        select(Workroom)
+        .options(
+            selectinload(Workroom.leaderboards).joinedload(Leaderboard.user),
+            selectinload(Workroom.members)
+        )
+        .where(Workroom.id == workroom_id)
+    )
+    workroom = workroom_result.scalar_one_or_none()
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
 
@@ -395,7 +402,27 @@ async def get_workroom_details(
     if not result.scalar():
         raise HTTPException(status_code=403, detail="Not authorized to access this workroom")
 
-    # Get all members
+    # Process leaderboard data
+    leaderboard_data = []
+    for leaderboard in workroom.leaderboards:
+        leaderboard_data.append({
+            "user_id": leaderboard.user_id,
+            "user_name": format_member_name(leaderboard.user.first_name, leaderboard.user.last_name),
+            "avatar_url": leaderboard.user.avatar_url,
+            "score": leaderboard.score,
+            "rank": leaderboard.rank,
+            "kpi_score": leaderboard.kpi_score,
+            "task_score": leaderboard.task_score,
+            "teamwork_score": leaderboard.teamwork_score,
+            "engagement_score": leaderboard.engagement_score
+        })
+
+    # Sort leaderboard by score (descending) and calculate ranks
+    leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
+    for i, entry in enumerate(leaderboard_data, start=1):
+        entry["rank"] = i
+
+    # Get all members (rest of your existing member processing code remains the same)
     member_results = await session.execute(
         select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == workroom_id)
     )
@@ -451,6 +478,23 @@ async def get_workroom_details(
         user_metrics = metrics_by_user.get(member.id, [])
         summary = summary_by_user.get(member.id)
 
+        # Find leaderboard entry for this user
+        leaderboard_entry = None
+        if leaderboard_data:
+            user_entry = next(
+                (entry for entry in leaderboard_data if entry["user_id"] == member.id),
+                None
+            )
+            if user_entry:
+                leaderboard_entry = LeaderboardEntrySchema(
+                    score=user_entry["score"],
+                    rank=user_entry["rank"],
+                    kpi_score=user_entry["kpi_score"],
+                    task_score=user_entry["task_score"],
+                    teamwork_score=user_entry.get("teamwork_score"),
+                    engagement_score=user_entry.get("engagement_score")
+                )
+
         kpi_summary = None
         if summary is not None:
             kpi_summary = UserKPISummarySchema(
@@ -503,7 +547,8 @@ async def get_workroom_details(
                 daily_active_minutes=member.daily_active_minutes,
                 teamwork_collaborations=member.teamwork_collaborations,
                 kpi_summary=kpi_summary,
-                kpi_metric_history=kpi_metric_history
+                kpi_metric_history=kpi_metric_history,
+                leaderboard_data=leaderboard_entry
             )
         )
 
@@ -542,7 +587,6 @@ async def get_workroom_details(
                 for metric in (wr_kpi_summary.kpi_breakdown or [])
             ]
         )
-        
     else:
         workroom_kpi_summary = {
             "overall_alignment_percentage": 0.0,
@@ -580,8 +624,6 @@ async def get_workroom_details(
             }
         ]
 
-
-    # Return everything
     return {
         "id": workroom.id,
         "name": workroom.name,
@@ -591,7 +633,8 @@ async def get_workroom_details(
         "tasks": task_schemas,
         "performance_metrics": performance_metrics,
         "workroom_kpi_summary": workroom_kpi_summary,
-        "workroom_kpi_metric_history": workroom_kpi_metric_history
+        "workroom_kpi_metric_history": workroom_kpi_metric_history,
+        "leaderboard": leaderboard_data
     }
 
 @workroom_router.delete("/{workroom_id}")
@@ -677,6 +720,7 @@ async def add_members_to_workroom(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    today = date.today()
     statement = select(Workroom).options(selectinload(Workroom.members)).where(Workroom.id == workroom_id)
     result = await session.execute(statement)
     workroom = result.scalars().first()
@@ -734,20 +778,10 @@ async def add_members_to_workroom(
             ))
 
             # Create UserKPIMetricHistory entries
-            for metric in performance_metrics:
-                session.add(UserKPIMetricHistory(
-                    user_id=user.id,
-                    workroom_id=workroom_id,
-                    kpi_name=metric.kpi_name,
-                    date=datetime.utcnow().date(),
-                    alignment_percentage=0
-                ))
-
-            # Add one for the overall alignment too
             session.add(UserKPIMetricHistory(
                 user_id=user.id,
                 workroom_id=workroom_id,
-                kpi_name="OverallKPI Alignment",
+                kpi_name=f"{today} - Overall Alignment",
                 date=datetime.utcnow().date(),
                 alignment_percentage=0
             ))
@@ -861,20 +895,20 @@ async def get_workroom_members(
                 }
             ]
 
-        full_member = FullMemberSchema(
-            id=member.id,
-            name=f"{(member.first_name or '')} {(member.last_name or '')}".strip(),
-            email=member.email,
-            avatar_url=getattr(member, "avatar_url", None),
-            xp=member.xp if hasattr(member, "xp") else 0,
-            level=member.level if hasattr(member, "level") else 1,
-            productivity=getattr(member, "productivity", 0.0),
-            average_task_time=getattr(member, "average_task_time", 0.0),
-            daily_active_minutes=getattr(member, "daily_active_minutes", 0),
-            teamwork_collaborations=getattr(member, "teamwork_collaborations", 0),
-            kpi_summary=kpi_summary,
-            kpi_metric_history=kpi_metric_history
-        )
+        full_member = {
+            "id": member.id,
+            "name": f"{(member.first_name or '')} {(member.last_name or '')}".strip(),
+            "email": member.email,
+            "avatar_url": getattr(member, "avatar_url", None),
+            "xp": member.xp if hasattr(member, "xp") else 0,
+            "level": member.level if hasattr(member, "level") else 1,
+            "productivity": getattr(member, "productivity", 0.0),
+            "average_task_time": getattr(member, "average_task_time", 0.0),
+            "daily_active_minutes": getattr(member, "daily_active_minutes", 0),
+            "teamwork_collaborations": getattr(member, "teamwork_collaborations", 0),
+            "kpi_summary": kpi_summary,
+            "kpi_metric_history": kpi_metric_history
+        }
         member_list.append(full_member)
 
     # Task counts
