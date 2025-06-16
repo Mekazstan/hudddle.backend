@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str
     DOMAIN: str
     HUDDDLE_LINK: str
+    MONGODB_URL: str
+    MONGODB_NAME: str
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parent.parent / ".env",

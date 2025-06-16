@@ -20,6 +20,8 @@ pytest
 pyjwt
 python-socketio
 redis
+requests
 websockets
 sqlalchemy
 uvicorn
+pytest-asyncio

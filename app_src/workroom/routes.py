@@ -1,7 +1,7 @@
 import logging
 from fastapi import (Body, APIRouter, File, HTTPException, 
                      Depends, UploadFile, status)
-from sqlalchemy import func, select, delete
+from sqlalchemy import exists, func, select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -330,7 +330,13 @@ async def get_workroom_details(
         raise HTTPException(status_code=404, detail="Workroom not found")
 
     # Authorization check
-    if workroom.created_by != current_user.id:
+    result = await session.execute(
+        select(exists().where(
+            WorkroomMemberLink.workroom_id == workroom_id,
+            WorkroomMemberLink.user_id == current_user.id
+        ))
+    )
+    if not result.scalar():
         raise HTTPException(status_code=403, detail="Not authorized to access this workroom")
 
     # Get all members

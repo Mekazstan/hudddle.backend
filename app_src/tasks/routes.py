@@ -6,7 +6,7 @@ from sqlalchemy import select
 from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
-from app_src.achievements.service import calculate_slacker_points, update_user_level, update_user_levels
+from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
 from .schema import TaskCreate, TaskSchema, TaskUpdate
 from app_src.db.models import (FriendLink, LevelCategory, Task, TaskCollaborator, TaskStatus,

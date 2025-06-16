@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app_src.auth.utils import get_current_user_websocket
@@ -79,11 +80,24 @@ async def workroom_websocket_endpoint(
         
         # Handle messages
         while True:
-            data = await websocket.receive_json()
-            await manager.handle_message(data, workroom_id, str(user.id), session)
+            try:
+                data = await websocket.receive_json()
+                await manager.handle_message(data, workroom_id, str(user.id), session)
+            except json.JSONDecodeError:
+                await websocket.send_json({'error': 'Invalid JSON format'})
+            except KeyError as e:
+                await websocket.send_json({'error': f'Missing required field: {str(e)}'})
             
     except WebSocketDisconnect:
         await manager.disconnect(websocket, workroom_id, str(user.id), session)
     except Exception as e:
         print(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({
+                'type': 'error',
+                'message': 'An unexpected error occurred'
+            })
+            await websocket.close(code=1011)
+        except:
+            pass
         await manager.disconnect(websocket, workroom_id, str(user.id), session)

@@ -117,6 +117,8 @@ async def update_user_streak(user_id, session: AsyncSession):
 
     if user_streak.last_active_date == today - timedelta(days=1):
         user_streak.current_streak += 1
+        # ✅ Minus -2 Slacker points for breaking the streak
+        await update_user_level(LevelCategory.SLACKER, -2, user_id, session)
     else:
         user_streak.current_streak = 1
         
