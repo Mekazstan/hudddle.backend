@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
 from .service import upload_audio_to_s3
-from .schema import (WorkroomCreate, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
+from .schema import (FullMemberSchema, MemberMetricSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomCreate, WorkroomDetailsSchema, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
 from uuid import UUID
@@ -16,8 +16,7 @@ from app_src.db.models import (LevelCategory, UserKPIMetricHistory, UserKPISumma
                                Task, TaskStatus, WorkroomKPIMetricHistory, WorkroomKPISummary, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from app_src.auth.dependencies import get_current_user
-from app_src.tasks.schema import (FullMemberSchema, MemberMetricSchema, 
-                          TaskSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomDetailsSchema)
+from app_src.tasks.schema import TaskSchema
 from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
