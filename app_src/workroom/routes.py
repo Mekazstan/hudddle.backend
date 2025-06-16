@@ -483,11 +483,10 @@ async def get_workroom_details(
             # Provide default KPI metric history if none found
             kpi_metric_history = [
                 {
-                    "kpi_name":kpi,
+                    "kpi_name":"Overall KPI Alignment",
                     "date":date.today(),
                     "alignment_percentage":0.0
                 }
-                for kpi in expected_kpis
             ]
 
         full_members.append(
@@ -549,11 +548,10 @@ async def get_workroom_details(
             summary_text=f"No summary for {workroom.name}",
             kpi_breakdown=[
                 {
-                    "kpi_name":kpi, 
-                    "percentage":0.0, 
-                    "weight": kpi_weight_map.get(kpi, 0.0)
+                    "kpi_name":"Overall KPI Alignment", 
+                    "date":date.today(),
+                    "alignment_percentage":0.0
                 }
-                for kpi in expected_kpis
             ]
         )
 
@@ -855,11 +853,10 @@ async def get_workroom_members(
         else:
             kpi_metric_history = [
                 {
-                    "kpi_name": kpi,
+                    "kpi_name": "Overall KPI Alignment",
                     "date": date.today(),
                     "alignment_percentage": 0.0
                 }
-                for kpi in expected_kpis
             ]
 
         full_member = FullMemberSchema(
