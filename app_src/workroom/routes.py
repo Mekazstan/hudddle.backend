@@ -469,14 +469,26 @@ async def get_workroom_details(
                 ]
             }
 
-        kpi_metric_history = [
-            UserKPIMetricHistorySchema(
-                kpi_name=record.kpi_name,
-                date=record.date,
-                alignment_percentage=record.alignment_percentage
-            )
-            for record in history_by_user.get(member.id, [])
-        ]
+        # Build KPI metric history for member
+        if history_by_user.get(member.id):
+            kpi_metric_history = [
+                UserKPIMetricHistorySchema(
+                    kpi_name=record.kpi_name,
+                    date=record.date,
+                    alignment_percentage=record.alignment_percentage
+                )
+                for record in history_by_user[member.id]
+            ]
+        else:
+            # Provide default KPI metric history if none found
+            kpi_metric_history = [
+                {
+                    "kpi_name":kpi,
+                    "date":date.today(),
+                    "alignment_percentage":0.0
+                }
+                for kpi in expected_kpis
+            ]
 
         full_members.append(
             FullMemberSchema(
@@ -490,7 +502,6 @@ async def get_workroom_details(
                 average_task_time=float(member.average_task_time),
                 daily_active_minutes=member.daily_active_minutes,
                 teamwork_collaborations=member.teamwork_collaborations,
-                metrics=user_metrics,
                 kpi_summary=kpi_summary,
                 kpi_metric_history=kpi_metric_history
             )
@@ -782,40 +793,75 @@ async def get_workroom_members(
         .where(WorkroomMemberLink.workroom_id == workroom_id)
     )
     members = members_query.scalars().all()
-    
-    # Fetch all performance metric definitions for the workroom
+
+    # Get performance metrics
     performance_metrics_result = await session.execute(
         select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
     )
     performance_metrics_objs = performance_metrics_result.scalars().all()
     expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
+    kpi_weight_map = {metric.kpi_name: metric.weight for metric in performance_metrics_objs}
+
+    # Fetch KPI summaries for all users in this workroom
+    kpi_summaries_result = await session.execute(
+        select(UserKPISummary).where(UserKPISummary.workroom_id == workroom_id)
+    )
+    user_kpi_summaries = kpi_summaries_result.scalars().all()
+    summary_by_user = {s.user_id: s for s in user_kpi_summaries}
+
+    # Fetch KPI metric histories for all users in this workroom
+    user_history_result = await session.execute(
+        select(UserKPIMetricHistory).where(UserKPIMetricHistory.workroom_id == workroom_id)
+    )
+    user_metric_histories = user_history_result.scalars().all()
+
+    history_by_user: dict[UUID, list[UserKPIMetricHistory]] = {}
+    for record in user_metric_histories:
+        history_by_user.setdefault(record.user_id, []).append(record)
 
     member_list = []
 
     for member in members:
-        # Fetch latest KPI summary for this member in the current workroom
-        kpi_summary_query = await session.execute(
-            select(UserKPISummary)
-            .where(UserKPISummary.user_id == member.id, UserKPISummary.workroom_id == workroom_id)
-            .order_by(UserKPISummary.date.desc())
-            .limit(1)
-        )
-        kpi_summary = kpi_summary_query.scalar()
-
-        # Build full metric list, ensuring all KPIs are included
-        metric_map = {k.get("kpi_name"): k for k in (kpi_summary.kpi_breakdown or [])} if kpi_summary else {}
-        metric_schemas = []
-
-        for kpi_name in expected_kpis:
-            kpi_data = metric_map.get(kpi_name, {})
-            metric_schemas.append(
-                    {
-                        "kpi_name": kpi_name,
-                        "percentage": kpi_data.get("percentage", 0)
-                    }
+        summary = summary_by_user.get(member.id)
+        
+        if summary:
+            kpi_summary = UserKPISummarySchema(
+                overall_alignment_percentage=summary.overall_alignment_percentage,
+                summary_text=summary.summary_text,
+                kpi_breakdown=[
+                    MemberMetricSchema(**metric) for metric in (summary.kpi_breakdown or [])
+                ]
             )
+        else:
+            kpi_summary = {
+                "overall_alignment_percentage": 0.0,
+                "summary_text": f"No summary for {member.first_name or 'User'}",
+                "kpi_breakdown": [
+                    {"kpi_name": kpi, "percentage": 0.0, "weight": kpi_weight_map.get(kpi, 0.0)}
+                    for kpi in expected_kpis
+                ]
+            }
 
-        # Add member info to list
+        # KPI metric history
+        if history_by_user.get(member.id):
+            kpi_metric_history = [
+                UserKPIMetricHistorySchema(
+                    kpi_name=record.kpi_name,
+                    date=record.date,
+                    alignment_percentage=record.alignment_percentage
+                )
+                for record in history_by_user[member.id]
+            ]
+        else:
+            kpi_metric_history = [
+                {
+                    "kpi_name": kpi,
+                    "date": date.today(),
+                    "alignment_percentage": 0.0
+                }
+                for kpi in expected_kpis
+            ]
+
         full_member = FullMemberSchema(
             id=member.id,
             name=f"{(member.first_name or '')} {(member.last_name or '')}".strip(),
@@ -827,7 +873,8 @@ async def get_workroom_members(
             average_task_time=getattr(member, "average_task_time", 0.0),
             daily_active_minutes=getattr(member, "daily_active_minutes", 0),
             teamwork_collaborations=getattr(member, "teamwork_collaborations", 0),
-            metrics=metric_schemas
+            kpi_summary=kpi_summary,
+            kpi_metric_history=kpi_metric_history
         )
         member_list.append(full_member)
 

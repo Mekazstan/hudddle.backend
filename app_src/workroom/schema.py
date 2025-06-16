@@ -124,7 +124,6 @@ class FullMemberSchema(BaseModel):
     average_task_time: float
     daily_active_minutes: int
     teamwork_collaborations: int
-    metrics: List[MemberMetricSchema]
     kpi_summary: Optional[UserKPISummarySchema] = None
     kpi_metric_history: List[UserKPIMetricHistorySchema] = []
 
