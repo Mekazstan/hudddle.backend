@@ -113,12 +113,12 @@ class UserKPISummarySchema(BaseModel):
     kpi_breakdown: List[MemberMetricSchema]
     
 class LeaderboardEntrySchema(BaseModel):
-    score: int
+    score: float
     rank: int
     kpi_score: float
-    task_score: int
-    teamwork_score: Optional[int] = None
-    engagement_score: Optional[int] = None
+    task_score: float
+    teamwork_score: Optional[float] = None
+    engagement_score: Optional[float] = None
 
 class FullMemberSchema(BaseModel):
     id: UUID
