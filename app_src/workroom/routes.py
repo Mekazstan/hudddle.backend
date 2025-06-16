@@ -374,7 +374,7 @@ async def update_workroom(
     await session.refresh(workroom)  
     return workroom
 
-@workroom_router.get("/{workroom_id}", response_model=WorkroomDetailsSchema)
+@workroom_router.get("/{workroom_id}")
 async def get_workroom_details(
     workroom_id: UUID,
     session: AsyncSession = Depends(get_session),
