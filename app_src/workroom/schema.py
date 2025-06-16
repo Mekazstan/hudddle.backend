@@ -91,7 +91,7 @@ class UserDailyKPIReport(BaseModel):
 class WorkroomKPIMetricHistorySchema(BaseModel):
     kpi_name: str
     date: date
-    metric_value: float
+    alignment_percentage: float
     
 class MemberMetricSchema(BaseModel):
     kpi_name: str

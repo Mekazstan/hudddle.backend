@@ -548,10 +548,10 @@ async def get_workroom_details(
             "summary_text": f"No summary for {workroom.name}",
             "kpi_breakdown": [
                 {
-                    "kpi_name":"Overall KPI Alignment", 
-                    "date":date.today(),
-                    "alignment_percentage":0.0
-                }
+                    "kpi_name": metrics.kpi_name, 
+                    "weight": metrics.weight,
+                    "metric_value":0.0
+                } for metrics in performance_metrics
             ]
         }
 
@@ -564,7 +564,7 @@ async def get_workroom_details(
         WorkroomKPIMetricHistorySchema(
             kpi_name=record.kpi_name,
             date=record.date,
-            metric_value=record.metric_value
+            alignment_percentage=record.metric_value
         )
         for record in wr_metric_history
     ]
@@ -574,10 +574,15 @@ async def get_workroom_details(
             WorkroomKPIMetricHistorySchema(
                 kpi_name=kpi,
                 date=date.today(),
-                metric_value=0.0
+                alignment_percentage=0.0
             ) for kpi in expected_kpis
         ]
-
+    else:
+        workroom_kpi_metric_history = {
+            "kpi_name":"Overall KPI Alignment",
+            "date":date.today(),
+            "alignment_percentage":0.0
+        }
 
     # Return everything
     return {
