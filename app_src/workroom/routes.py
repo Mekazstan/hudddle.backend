@@ -580,17 +580,17 @@ async def get_workroom_details(
 
 
     # Return everything
-    return WorkroomDetailsSchema(
-        id=workroom.id,
-        name=workroom.name,
-        members=full_members,
-        completed_task_count=completed_task_count,
-        pending_task_count=pending_task_count,
-        tasks=task_schemas,
-        performance_metrics=performance_metrics,
-        workroom_kpi_summary=workroom_kpi_summary,
-        workroom_kpi_metric_history=workroom_kpi_metric_history
-    )
+    return {
+        "id": workroom.id,
+        "name": workroom.name,
+        "members": full_members,
+        "completed_task_count": completed_task_count,
+        "pending_task_count": pending_task_count,
+        "tasks": task_schemas,
+        "performance_metrics": performance_metrics,
+        "workroom_kpi_summary": workroom_kpi_summary,
+        "workroom_kpi_metric_history": workroom_kpi_metric_history
+    }
 
 @workroom_router.delete("/{workroom_id}")
 async def delete_workroom(
