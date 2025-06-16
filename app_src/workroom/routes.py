@@ -278,7 +278,8 @@ async def create_workroom(
             .where(Workroom.id == new_workroom.id)
             .options(
                 selectinload(Workroom.performance_metrics),
-                selectinload(Workroom.members)
+                selectinload(Workroom.members),
+                selectinload(Workroom.leaderboards)
             )
         )
         loaded_workroom = result.scalar_one()
@@ -288,13 +289,36 @@ async def create_workroom(
             select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == new_workroom.id)
         )
         all_members = all_members_result.scalars().all()
-
+        
+        # Create default leaderboard entries for all members
+        base_score = 30  # Starting score for the creator
+        for i, member in enumerate(all_members):
+            # Create progressively lower scores for other members
+            member_score = max(base_score - (i * 3), 2)  # Ensure minimum score of 20
+            
+            # Calculate component scores (these can be adjusted based on your scoring logic)
+            kpi_score = round(member_score * 0.5, 1)    # 50% of total score
+            task_score = round(member_score * 0.3, 1)   # 30% of total score
+            teamwork_score = round(member_score * 0.15, 1)  # 15% of total score
+            engagement_score = round(member_score * 0.05, 1)  # 5% of total score
+            
+            session.add(Leaderboard(
+                workroom_id=new_workroom.id,
+                user_id=member.id,
+                score=member_score,
+                kpi_score=kpi_score,
+                task_score=task_score,
+                teamwork_score=teamwork_score,
+                engagement_score=engagement_score,
+                rank=i + 1
+            ))
+            
         # 7. Fetch all performance metrics just created
         performance_metrics_result = await session.execute(
             select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == new_workroom.id)
         )
         created_metrics = performance_metrics_result.scalars().all()
-
+        
         # 8. Initialize KPI structures
         await initialize_kpi_data_for_workroom(session, new_workroom, all_members, created_metrics)
 
@@ -306,6 +330,7 @@ async def create_workroom(
                 recipient_emails=emails_to_invite
             )
 
+        await session.commit()
         return loaded_workroom
         
     except Exception as e:
@@ -403,24 +428,48 @@ async def get_workroom_details(
         raise HTTPException(status_code=403, detail="Not authorized to access this workroom")
 
     # Process leaderboard data
-    leaderboard_data = []
-    for leaderboard in workroom.leaderboards:
-        leaderboard_data.append({
-            "user_id": leaderboard.user_id,
-            "user_name": format_member_name(leaderboard.user.first_name, leaderboard.user.last_name),
-            "avatar_url": leaderboard.user.avatar_url,
-            "score": leaderboard.score,
-            "rank": leaderboard.rank,
-            "kpi_score": leaderboard.kpi_score,
-            "task_score": leaderboard.task_score,
-            "teamwork_score": leaderboard.teamwork_score,
-            "engagement_score": leaderboard.engagement_score
-        })
+    if workroom.leaderboards:
+        leaderboard_data = []
+        for leaderboard in workroom.leaderboards:
+            leaderboard_data.append({
+                "user_id": leaderboard.user_id,
+                "user_name": format_member_name(leaderboard.user.first_name, leaderboard.user.last_name),
+                "avatar_url": leaderboard.user.avatar_url,
+                "score": leaderboard.score,
+                "rank": leaderboard.rank,
+                "kpi_score": leaderboard.kpi_score,
+                "task_score": leaderboard.task_score,
+                "teamwork_score": leaderboard.teamwork_score,
+                "engagement_score": leaderboard.engagement_score
+            })
 
-    # Sort leaderboard by score (descending) and calculate ranks
-    leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
-    for i, entry in enumerate(leaderboard_data, start=1):
-        entry["rank"] = i
+        # Sort leaderboard by score (descending) and calculate ranks
+        leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
+        for i, entry in enumerate(leaderboard_data, start=1):
+            entry["rank"] = i
+    else:
+        # Generate default leaderboard data based on workroom members
+        members_result = await session.execute(
+            select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == workroom_id)
+        )
+        members = members_result.scalars().all()
+        
+        leaderboard_data = []
+        base_score = 30  # Starting score for default data
+        for i, member in enumerate(members):
+            # Create progressively lower scores for default ranking
+            member_score = max(base_score - (i * 3), 2)  # Ensure minimum score of 20
+            leaderboard_data.append({
+                "user_id": member.id,
+                "user_name": format_member_name(member.first_name, member.last_name),
+                "avatar_url": member.avatar_url,
+                "score": member_score,
+                "rank": i + 1,
+                "kpi_score": round(member_score * 0.5, 1),  # KPI contributes 50%
+                "task_score": round(member_score * 0.3, 1),  # Tasks contribute 30%
+                "teamwork_score": round(member_score * 0.15, 1),  # Teamwork 15%
+                "engagement_score": round(member_score * 0.05, 1)  # Engagement 5%
+            })
 
     # Get all members (rest of your existing member processing code remains the same)
     member_results = await session.execute(
