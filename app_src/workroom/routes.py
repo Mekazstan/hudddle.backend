@@ -561,9 +561,8 @@ async def get_workroom_details(
         select(WorkroomKPIMetricHistory).where(WorkroomKPIMetricHistory.workroom_id == workroom_id)
     )
     wr_metric_history = wr_metric_history_result.scalars().all()
-    workroom_kpi_metric_history = None
-    
-    if wr_metric_history is not None:
+
+    if wr_metric_history:
         workroom_kpi_metric_history = [
             WorkroomKPIMetricHistorySchema(
                 kpi_name=record.kpi_name,
@@ -573,11 +572,14 @@ async def get_workroom_details(
             for record in wr_metric_history
         ]
     else:
-        workroom_kpi_metric_history = {
-            "kpi_name":"Overall KPI Alignment",
-            "date":date.today(),
-            "alignment_percentage":0.0
-        }
+        workroom_kpi_metric_history = [
+            {
+                "kpi_name": "Overall KPI Alignment",
+                "date": date.today(),
+                "alignment_percentage": 0.0
+            }
+        ]
+
 
     # Return everything
     return {
