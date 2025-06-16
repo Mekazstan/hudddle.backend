@@ -41,6 +41,8 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
+      MONGODB_URL: ${MONGODB_URL}
+      MONGODB_NAME: ${MONGODB_NAME}
     depends_on:
       - redis
   celery_worker:
@@ -81,6 +83,8 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
+      MONGODB_URL: ${MONGODB_URL}
+      MONGODB_NAME: ${MONGODB_NAME}
     depends_on:
       - redis
       - api
