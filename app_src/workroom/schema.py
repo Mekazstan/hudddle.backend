@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 from datetime import date
 from app_src.auth.schema import UserSchema
-from app_src.tasks.schema import MemberMetricSchema
+from app_src.tasks.schema import TaskSchema
 
 class WorkroomPerformanceMetricSchema(BaseModel):
     kpi_name: str = Field(..., min_length=2, max_length=50)
@@ -92,9 +92,49 @@ class WorkroomKPIMetricHistorySchema(BaseModel):
     kpi_name: str
     date: date
     metric_value: float
+    
+class MemberMetricSchema(BaseModel):
+    kpi_name: str
+    weight: int
+    metric_value: Optional[float] = None
 
 class WorkroomKPISummarySchema(BaseModel):
     overall_alignment_percentage: float
     summary_text: Optional[str]
     kpi_breakdown: List[MemberMetricSchema]
 
+class UserKPIMetricHistorySchema(BaseModel):
+    kpi_name: str
+    date: date
+    alignment_percentage: float
+    
+class UserKPISummarySchema(BaseModel):
+    overall_alignment_percentage: float
+    summary_text: Optional[str]
+    kpi_breakdown: List[MemberMetricSchema]
+
+class FullMemberSchema(BaseModel):
+    id: UUID
+    name: str
+    email: str
+    avatar_url: Optional[str]
+    xp: int
+    level: int
+    productivity: float
+    average_task_time: float
+    daily_active_minutes: int
+    teamwork_collaborations: int
+    metrics: List[MemberMetricSchema]
+    kpi_summary: Optional[UserKPISummarySchema] = None
+    kpi_metric_history: List[UserKPIMetricHistorySchema] = []
+
+class WorkroomDetailsSchema(BaseModel):
+    id: UUID
+    name: str
+    members: List[FullMemberSchema]
+    completed_task_count: int
+    pending_task_count: int
+    tasks: List[TaskSchema]
+    performance_metrics: List[WorkroomPerformanceMetricSchema]
+    workroom_kpi_summary: Optional[WorkroomKPISummarySchema] = None
+    workroom_kpi_metric_history: List[WorkroomKPIMetricHistorySchema] = []
