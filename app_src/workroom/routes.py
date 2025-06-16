@@ -458,14 +458,14 @@ async def get_workroom_details(
                 ]
             )
         else:
-            kpi_summary = UserKPISummarySchema(
-                overall_alignment_percentage=0.0,
-                summary_text=f"No summary for {member.first_name or 'User'}",
-                kpi_breakdown=[
+            kpi_summary = {
+                "overall_alignment_percentage": 0.0,
+                "summary_text": f"No summary for {member.first_name or 'User'}",
+                "kpi_breakdown": [
                     {"kpi_name":kpi, "percentage":0.0}
                     for kpi in expected_kpis
                 ]
-            )
+            }
 
         kpi_metric_history = [
             UserKPIMetricHistorySchema(
