@@ -543,17 +543,17 @@ async def get_workroom_details(
         )
         
     else:
-        workroom_kpi_summary = WorkroomKPISummarySchema(
-            overall_alignment_percentage=0.0,
-            summary_text=f"No summary for {workroom.name}",
-            kpi_breakdown=[
+        workroom_kpi_summary = {
+            "overall_alignment_percentage": 0.0,
+            "summary_text": f"No summary for {workroom.name}",
+            "kpi_breakdown": [
                 {
                     "kpi_name":"Overall KPI Alignment", 
                     "date":date.today(),
                     "alignment_percentage":0.0
                 }
             ]
-        )
+        }
 
     # Workroom KPI metric history (line chart)
     wr_metric_history_result = await session.execute(
