@@ -425,10 +425,10 @@ async def get_workroom_details(
         for kpi_name in expected_kpis:
             metric_data = metric_map.get(kpi_name, {})
             complete_metrics.append(
-                MemberMetricSchema(
-                    kpi_name=kpi_name,
-                    percentage=metric_data.get("percentage", 0),
-                )
+                {
+                    "kpi_name":kpi_name,
+                    "percentage":metric_data.get("percentage", 0)
+                }
             )
         metrics_by_user[summary.user_id] = complete_metrics
 
@@ -462,7 +462,7 @@ async def get_workroom_details(
                 overall_alignment_percentage=0.0,
                 summary_text=f"No summary for {member.first_name or 'User'}",
                 kpi_breakdown=[
-                    MemberMetricSchema(kpi_name=kpi, percentage=0.0)
+                    {"kpi_name":kpi, "percentage":0.0}
                     for kpi in expected_kpis
                 ]
             )
@@ -535,7 +535,7 @@ async def get_workroom_details(
             overall_alignment_percentage=0.0,
             summary_text=f"No summary for {workroom.name}",
             kpi_breakdown=[
-                MemberMetricSchema(kpi_name=kpi, percentage=0.0)
+                {"kpi_name":kpi, "percentage":0.0}
                 for kpi in expected_kpis
             ]
         )
@@ -803,10 +803,10 @@ async def get_workroom_members(
         for kpi_name in expected_kpis:
             kpi_data = metric_map.get(kpi_name, {})
             metric_schemas.append(
-                MemberMetricSchema(
-                    kpi_name=kpi_name,
-                    percentage=kpi_data.get("percentage", 0),
-                )
+                    {
+                        "kpi_name": kpi_name,
+                        "percentage": kpi_data.get("percentage", 0)
+                    }
             )
 
         # Add member info to list
