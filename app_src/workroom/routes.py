@@ -17,7 +17,7 @@ from app_src.db.models import (LevelCategory, UserKPIMetricHistory, UserKPISumma
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from app_src.auth.dependencies import get_current_user
 from app_src.tasks.schema import TaskSchema
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 import boto3
 from botocore.exceptions import ClientError
 from app_src.config import Config
@@ -90,6 +90,47 @@ def format_member_name(first_name: Optional[str], last_name: Optional[str]) -> s
     if last_name:
         return last_name
     return "Unnamed Member"
+
+async def initialize_kpi_data_for_workroom(session, workroom: Workroom, members: list[User], performance_metrics: list[WorkroomPerformanceMetric]):
+    today = date.today()
+    kpi_names = [metric.kpi_name for metric in performance_metrics]
+
+    # 1. Create default WorkroomKPISummary
+    session.add(WorkroomKPISummary(
+        workroom_id=workroom.id,
+        date=today,
+        overall_alignment_percentage=0.0,
+        summary_text=f"No summary for {workroom.name}",
+        kpi_breakdown=[{"kpi_name": kpi, "percentage": 0} for kpi in kpi_names]
+    ))
+
+    # 2. Create default WorkroomKPIMetricHistory entries
+    for kpi in kpi_names:
+        session.add(WorkroomKPIMetricHistory(
+            workroom_id=workroom.id,
+            kpi_name=kpi,
+            date=today,
+            metric_value=0.0
+        ))
+
+    # 3. For each user: UserKPISummary + UserKPIMetricHistory
+    for member in members:
+        session.add(UserKPISummary(
+            user_id=member.id,
+            workroom_id=workroom.id,
+            date=today,
+            overall_alignment_percentage=0.0,
+            summary_text=f"No summary for {member.first_name or 'User'}",
+            kpi_breakdown=[{"kpi_name": kpi, "percentage": 0} for kpi in kpi_names]
+        ))
+        for kpi in kpi_names:
+            session.add(UserKPIMetricHistory(
+                user_id=member.id,
+                workroom_id=workroom.id,
+                kpi_name=kpi,
+                date=today,
+                alignment_percentage=0.0
+            ))
 
 # Workroom Endpoints
 
@@ -241,8 +282,23 @@ async def create_workroom(
             )
         )
         loaded_workroom = result.scalar_one()
+        
+        # 6. Fetch all members
+        all_members_result = await session.execute(
+            select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == new_workroom.id)
+        )
+        all_members = all_members_result.scalars().all()
 
-        # 6. Send invites to non-members
+        # 7. Fetch all performance metrics just created
+        performance_metrics_result = await session.execute(
+            select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == new_workroom.id)
+        )
+        created_metrics = performance_metrics_result.scalars().all()
+
+        # 8. Initialize KPI structures
+        await initialize_kpi_data_for_workroom(session, new_workroom, all_members, created_metrics)
+
+        # 9. Send invites to non-members
         if emails_to_invite:
             send_workroom_invites.delay(
                 workroom_name=new_workroom.name,
@@ -393,12 +449,21 @@ async def get_workroom_details(
         summary = summary_by_user.get(member.id)
 
         kpi_summary = None
-        if summary:
+        if summary is not None:
             kpi_summary = UserKPISummarySchema(
                 overall_alignment_percentage=summary.overall_alignment_percentage,
                 summary_text=summary.summary_text,
                 kpi_breakdown=[
                     MemberMetricSchema(**metric) for metric in (summary.kpi_breakdown or [])
+                ]
+            )
+        else:
+            kpi_summary = UserKPISummarySchema(
+                overall_alignment_percentage=0.0,
+                summary_text=f"No summary for {member.first_name or 'User'}",
+                kpi_breakdown=[
+                    MemberMetricSchema(kpi_name=kpi, percentage=0.0)
+                    for kpi in expected_kpis
                 ]
             )
 
@@ -455,13 +520,23 @@ async def get_workroom_details(
     wr_kpi_summary = wr_kpi_summary_result.scalar_one_or_none()
 
     workroom_kpi_summary = None
-    if wr_kpi_summary:
+    if wr_kpi_summary is not None:
         workroom_kpi_summary = WorkroomKPISummarySchema(
             overall_alignment_percentage=wr_kpi_summary.overall_alignment_percentage,
             summary_text=wr_kpi_summary.summary_text,
             kpi_breakdown=[
                 MemberMetricSchema(**metric)
                 for metric in (wr_kpi_summary.kpi_breakdown or [])
+            ]
+        )
+        
+    else:
+        workroom_kpi_summary = WorkroomKPISummarySchema(
+            overall_alignment_percentage=0.0,
+            summary_text=f"No summary for {workroom.name}",
+            kpi_breakdown=[
+                MemberMetricSchema(kpi_name=kpi, percentage=0.0)
+                for kpi in expected_kpis
             ]
         )
 
@@ -478,6 +553,16 @@ async def get_workroom_details(
         )
         for record in wr_metric_history
     ]
+    
+    if not workroom_kpi_metric_history:
+        workroom_kpi_metric_history = [
+            WorkroomKPIMetricHistorySchema(
+                kpi_name=kpi,
+                date=date.today(),
+                metric_value=0.0
+            ) for kpi in expected_kpis
+        ]
+
 
     # Return everything
     return WorkroomDetailsSchema(
@@ -586,6 +671,12 @@ async def add_members_to_workroom(
     # Track emails of users not found in database
     non_member_emails = []
     
+    # Fetch once before the for-loop
+    performance_metrics_result = await session.execute(
+        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+    )
+    performance_metrics = performance_metrics_result.scalars().all()
+    
     for email in emails:
         # Convert email to lowercase
         email_lower = email.lower()
@@ -610,6 +701,40 @@ async def add_members_to_workroom(
                     workroom_id=workroom_id,
                     user_id=user.id
                 ))
+            # Build default KPI breakdown
+            kpi_breakdown = [
+                {"kpi_name": metric.kpi_name, "percentage": 0} for metric in performance_metrics
+            ]
+
+            # Create UserKPISummary
+            session.add(UserKPISummary(
+                user_id=user.id,
+                workroom_id=workroom_id,
+                date=datetime.utcnow().date(),
+                overall_alignment_percentage=0,
+                kpi_breakdown=kpi_breakdown,
+                summary_text=f"No summary for {user.first_name or user.email}"
+            ))
+
+            # Create UserKPIMetricHistory entries
+            for metric in performance_metrics:
+                session.add(UserKPIMetricHistory(
+                    user_id=user.id,
+                    workroom_id=workroom_id,
+                    kpi_name=metric.kpi_name,
+                    date=datetime.utcnow().date(),
+                    alignment_percentage=0
+                ))
+
+            # Add one for the overall alignment too
+            session.add(UserKPIMetricHistory(
+                user_id=user.id,
+                workroom_id=workroom_id,
+                kpi_name="OverallKPI Alignment",
+                date=datetime.utcnow().date(),
+                alignment_percentage=0
+            ))
+
         else:
             non_member_emails.append(email_lower)
 
