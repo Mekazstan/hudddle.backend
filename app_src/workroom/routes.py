@@ -417,6 +417,7 @@ async def get_workroom_details(
     expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
 
     kpi_weight_map = {metric.kpi_name: metric.weight for metric in performance_metrics_objs}
+    
     # Build user metrics map
     metrics_by_user = {}
     for summary in user_kpi_summaries:
@@ -560,22 +561,16 @@ async def get_workroom_details(
         select(WorkroomKPIMetricHistory).where(WorkroomKPIMetricHistory.workroom_id == workroom_id)
     )
     wr_metric_history = wr_metric_history_result.scalars().all()
-    workroom_kpi_metric_history = [
-        WorkroomKPIMetricHistorySchema(
-            kpi_name=record.kpi_name,
-            date=record.date,
-            alignment_percentage=record.metric_value
-        )
-        for record in wr_metric_history
-    ]
+    workroom_kpi_metric_history = None
     
-    if not workroom_kpi_metric_history:
+    if wr_metric_history is not None:
         workroom_kpi_metric_history = [
             WorkroomKPIMetricHistorySchema(
-                kpi_name=kpi,
-                date=date.today(),
-                alignment_percentage=0.0
-            ) for kpi in expected_kpis
+                kpi_name=record.kpi_name,
+                date=record.date,
+                alignment_percentage=record.metric_value
+            )
+            for record in wr_metric_history
         ]
     else:
         workroom_kpi_metric_history = {
