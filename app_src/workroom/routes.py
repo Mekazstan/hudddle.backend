@@ -94,6 +94,7 @@ def format_member_name(first_name: Optional[str], last_name: Optional[str]) -> s
 async def initialize_kpi_data_for_workroom(session, workroom: Workroom, members: list[User], performance_metrics: list[WorkroomPerformanceMetric]):
     today = date.today()
     kpi_names = [metric.kpi_name for metric in performance_metrics]
+    kpi_weight = [metric.weight for metric in performance_metrics]
 
     # 1. Create default WorkroomKPISummary
     session.add(WorkroomKPISummary(
@@ -101,7 +102,7 @@ async def initialize_kpi_data_for_workroom(session, workroom: Workroom, members:
         date=today,
         overall_alignment_percentage=0.0,
         summary_text=f"No summary for {workroom.name}",
-        kpi_breakdown=[{"kpi_name": kpi, "percentage": 0} for kpi in kpi_names]
+        kpi_breakdown=[{"kpi_name": kpi, "percentage": 0, "weight": weight} for kpi, weight in zip(kpi_names, kpi_weight)]
     ))
 
     # 2. Create default WorkroomKPIMetricHistory entries
@@ -121,7 +122,7 @@ async def initialize_kpi_data_for_workroom(session, workroom: Workroom, members:
             date=today,
             overall_alignment_percentage=0.0,
             summary_text=f"No summary for {member.first_name or 'User'}",
-            kpi_breakdown=[{"kpi_name": kpi, "percentage": 0} for kpi in kpi_names]
+            kpi_breakdown=[{"kpi_name": kpi, "percentage": 0, "weight": weight} for kpi, weight in zip(kpi_names, kpi_weight)]
         ))
         for kpi in kpi_names:
             session.add(UserKPIMetricHistory(
@@ -415,6 +416,7 @@ async def get_workroom_details(
     performance_metrics = [WorkroomPerformanceMetricSchema.from_orm(metric) for metric in performance_metrics_objs]
     expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
 
+    kpi_weight_map = {metric.kpi_name: metric.weight for metric in performance_metrics_objs}
     # Build user metrics map
     metrics_by_user = {}
     for summary in user_kpi_summaries:
@@ -462,7 +464,7 @@ async def get_workroom_details(
                 "overall_alignment_percentage": 0.0,
                 "summary_text": f"No summary for {member.first_name or 'User'}",
                 "kpi_breakdown": [
-                    {"kpi_name":kpi, "percentage":0.0}
+                    {"kpi_name":kpi, "percentage":0.0, "weight": kpi_weight_map.get(kpi, 0.0)}
                     for kpi in expected_kpis
                 ]
             }
@@ -535,7 +537,11 @@ async def get_workroom_details(
             overall_alignment_percentage=0.0,
             summary_text=f"No summary for {workroom.name}",
             kpi_breakdown=[
-                {"kpi_name":kpi, "percentage":0.0}
+                {
+                    "kpi_name":kpi, 
+                    "percentage":0.0, 
+                    "weight": kpi_weight_map.get(kpi, 0.0)
+                }
                 for kpi in expected_kpis
             ]
         )
@@ -703,7 +709,7 @@ async def add_members_to_workroom(
                 ))
             # Build default KPI breakdown
             kpi_breakdown = [
-                {"kpi_name": metric.kpi_name, "percentage": 0} for metric in performance_metrics
+                {"kpi_name": metric.kpi_name, "percentage": 0, "weight": metric.weight} for metric in performance_metrics
             ]
 
             # Create UserKPISummary
