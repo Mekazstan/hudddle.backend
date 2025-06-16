@@ -8,16 +8,16 @@ from sqlalchemy.orm import selectinload
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
 from .service import upload_audio_to_s3
-from .schema import (WorkroomCreate, WorkroomPerformanceMetricSchema, 
+from .schema import (WorkroomCreate, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
 from uuid import UUID
-from app_src.db.models import (LevelCategory, UserKPISummary, Workroom, User, 
-                               Task, TaskStatus, WorkroomLiveSession, 
+from app_src.db.models import (LevelCategory, UserKPIMetricHistory, UserKPISummary, Workroom, User, 
+                               Task, TaskStatus, WorkroomKPIMetricHistory, WorkroomKPISummary, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
 from app_src.auth.dependencies import get_current_user
 from app_src.tasks.schema import (FullMemberSchema, MemberMetricSchema, 
-                          TaskSchema, WorkroomDetailsSchema)
+                          TaskSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomDetailsSchema)
 from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
@@ -345,45 +345,73 @@ async def get_workroom_details(
     )
     members = member_results.scalars().all()
 
-    # Get performance metrics for all members in one query
+    # Get user KPI summaries
     kpi_summaries_result = await session.execute(
-        select(UserKPISummary)
-        .where(UserKPISummary.workroom_id == workroom_id)
+        select(UserKPISummary).where(UserKPISummary.workroom_id == workroom_id)
     )
     user_kpi_summaries = kpi_summaries_result.scalars().all()
+    summary_by_user = {s.user_id: s for s in user_kpi_summaries}
 
-    # Fetch all performance metric definitions for the workroom
+    # Get all KPI metric definitions for the workroom
     performance_metrics_result = await session.execute(
         select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
     )
     performance_metrics_objs = performance_metrics_result.scalars().all()
     performance_metrics = [WorkroomPerformanceMetricSchema.from_orm(metric) for metric in performance_metrics_objs]
-
-    # Extract KPI names defined for the workroom
     expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
 
-    # Organize kpi_breakdown per user
+    # Build user metrics map
     metrics_by_user = {}
     for summary in user_kpi_summaries:
         raw_metrics = summary.kpi_breakdown or []
-        # Map by name for quick lookup
         metric_map = {m.get("kpi_name"): m for m in raw_metrics}
 
-        # Ensure all KPIs are present
         complete_metrics = []
         for kpi_name in expected_kpis:
             metric_data = metric_map.get(kpi_name, {})
             complete_metrics.append(
                 MemberMetricSchema(
                     kpi_name=kpi_name,
-                    weight=metric_data.get("weight", 0),
+                    percentage=metric_data.get("percentage", 0),
                 )
             )
         metrics_by_user[summary.user_id] = complete_metrics
 
-    # Construct enriched member list
+    # Fetch user KPI metric history (for line chart)
+    user_history_result = await session.execute(
+        select(UserKPIMetricHistory).where(UserKPIMetricHistory.workroom_id == workroom_id)
+    )
+    user_metric_histories = user_history_result.scalars().all()
+
+    history_by_user: dict[UUID, list[UserKPIMetricHistory]] = {}
+    for record in user_metric_histories:
+        history_by_user.setdefault(record.user_id, []).append(record)
+
+    # Build full member list
     full_members = []
     for member in members:
+        user_metrics = metrics_by_user.get(member.id, [])
+        summary = summary_by_user.get(member.id)
+
+        kpi_summary = None
+        if summary:
+            kpi_summary = UserKPISummarySchema(
+                overall_alignment_percentage=summary.overall_alignment_percentage,
+                summary_text=summary.summary_text,
+                kpi_breakdown=[
+                    MemberMetricSchema(**metric) for metric in (summary.kpi_breakdown or [])
+                ]
+            )
+
+        kpi_metric_history = [
+            UserKPIMetricHistorySchema(
+                kpi_name=record.kpi_name,
+                date=record.date,
+                alignment_percentage=record.alignment_percentage
+            )
+            for record in history_by_user.get(member.id, [])
+        ]
+
         full_members.append(
             FullMemberSchema(
                 id=member.id,
@@ -396,14 +424,13 @@ async def get_workroom_details(
                 average_task_time=float(member.average_task_time),
                 daily_active_minutes=member.daily_active_minutes,
                 teamwork_collaborations=member.teamwork_collaborations,
-                metrics=metrics_by_user.get(member.id, [
-                    MemberMetricSchema(kpi_name=kpi_name, weight=0)
-                    for kpi_name in expected_kpis
-                ])
+                metrics=user_metrics,
+                kpi_summary=kpi_summary,
+                kpi_metric_history=kpi_metric_history
             )
         )
 
-    # Task counts
+    # Completed and pending task counts
     completed_task_count = (await session.execute(
         select(func.count(Task.id))
         .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.COMPLETED)
@@ -414,23 +441,46 @@ async def get_workroom_details(
         .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.PENDING)
     )).scalar() or 0
 
-    # All tasks in workroom
+    # All tasks in the workroom
     tasks_result = await session.execute(
         select(Task).where(Task.workroom_id == workroom_id)
     )
     tasks = tasks_result.scalars().all()
     task_schemas = [TaskSchema.from_orm(task) for task in tasks]
-    
-    # Workroom performance metrics
-    performance_metrics_result = await session.execute(
-        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+
+    # Workroom KPI summary
+    wr_kpi_summary_result = await session.execute(
+        select(WorkroomKPISummary).where(WorkroomKPISummary.workroom_id == workroom_id)
+        .order_by(WorkroomKPISummary.date.desc()).limit(1)
     )
-    performance_metrics = [
-        WorkroomPerformanceMetricSchema.from_orm(metric)
-        for metric in performance_metrics_result.scalars().all()
+    wr_kpi_summary = wr_kpi_summary_result.scalar_one_or_none()
+
+    workroom_kpi_summary = None
+    if wr_kpi_summary:
+        workroom_kpi_summary = WorkroomKPISummarySchema(
+            overall_alignment_percentage=wr_kpi_summary.overall_alignment_percentage,
+            summary_text=wr_kpi_summary.summary_text,
+            kpi_breakdown=[
+                MemberMetricSchema(**metric)
+                for metric in (wr_kpi_summary.kpi_breakdown or [])
+            ]
+        )
+
+    # Workroom KPI metric history (line chart)
+    wr_metric_history_result = await session.execute(
+        select(WorkroomKPIMetricHistory).where(WorkroomKPIMetricHistory.workroom_id == workroom_id)
+    )
+    wr_metric_history = wr_metric_history_result.scalars().all()
+    workroom_kpi_metric_history = [
+        WorkroomKPIMetricHistorySchema(
+            kpi_name=record.kpi_name,
+            date=record.date,
+            metric_value=record.metric_value
+        )
+        for record in wr_metric_history
     ]
 
-    # Return all enriched data
+    # Return everything
     return WorkroomDetailsSchema(
         id=workroom.id,
         name=workroom.name,
@@ -438,7 +488,9 @@ async def get_workroom_details(
         completed_task_count=completed_task_count,
         pending_task_count=pending_task_count,
         tasks=task_schemas,
-        performance_metrics=performance_metrics
+        performance_metrics=performance_metrics,
+        workroom_kpi_summary=workroom_kpi_summary,
+        workroom_kpi_metric_history=workroom_kpi_metric_history
     )
 
 @workroom_router.delete("/{workroom_id}")
@@ -629,7 +681,7 @@ async def get_workroom_members(
             metric_schemas.append(
                 MemberMetricSchema(
                     kpi_name=kpi_name,
-                    weight=kpi_data.get("weight", 0),
+                    percentage=kpi_data.get("percentage", 0),
                 )
             )
 

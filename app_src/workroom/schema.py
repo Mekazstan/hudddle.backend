@@ -3,7 +3,9 @@ from typing import List, Optional
 from app_src.db.models import TaskStatus
 from datetime import datetime
 from uuid import UUID
+from datetime import date
 from app_src.auth.schema import UserSchema
+from app_src.tasks.schema import MemberMetricSchema
 
 class WorkroomPerformanceMetricSchema(BaseModel):
     kpi_name: str = Field(..., min_length=2, max_length=50)
@@ -85,3 +87,14 @@ class UserDailyKPIReport(BaseModel):
     summary_text: str
     overall_alignment_percentage: float
     kpi_breakdown: List[KPIBreakdown]
+
+class WorkroomKPIMetricHistorySchema(BaseModel):
+    kpi_name: str
+    date: date
+    metric_value: float
+
+class WorkroomKPISummarySchema(BaseModel):
+    overall_alignment_percentage: float
+    summary_text: Optional[str]
+    kpi_breakdown: List[MemberMetricSchema]
+

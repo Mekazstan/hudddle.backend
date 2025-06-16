@@ -2,8 +2,9 @@ from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime, timezone
 from uuid import UUID
+from datetime import date
 from app_src.db.models import TaskStatus
-from app_src.workroom.schema import WorkroomPerformanceMetricSchema
+from app_src.workroom.schema import WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema
 
 class TaskSchema(BaseModel):
     id: UUID
@@ -120,6 +121,17 @@ class TaskUpdate(BaseModel):
 class MemberMetricSchema(BaseModel):
     kpi_name: str
     weight: int
+    metric_value: Optional[float] = None
+    
+class UserKPIMetricHistorySchema(BaseModel):
+    kpi_name: str
+    date: date
+    alignment_percentage: float
+    
+class UserKPISummarySchema(BaseModel):
+    overall_alignment_percentage: float
+    summary_text: Optional[str]
+    kpi_breakdown: List[MemberMetricSchema]
 
 class FullMemberSchema(BaseModel):
     id: UUID
@@ -133,6 +145,8 @@ class FullMemberSchema(BaseModel):
     daily_active_minutes: int
     teamwork_collaborations: int
     metrics: List[MemberMetricSchema]
+    kpi_summary: Optional[UserKPISummarySchema] = None
+    kpi_metric_history: List[UserKPIMetricHistorySchema] = []
 
 class WorkroomDetailsSchema(BaseModel):
     id: UUID
@@ -142,3 +156,5 @@ class WorkroomDetailsSchema(BaseModel):
     pending_task_count: int
     tasks: List[TaskSchema]
     performance_metrics: List[WorkroomPerformanceMetricSchema]
+    workroom_kpi_summary: Optional[WorkroomKPISummarySchema] = None
+    workroom_kpi_metric_history: List[WorkroomKPIMetricHistorySchema] = []
