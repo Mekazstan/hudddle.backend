@@ -498,7 +498,11 @@ async def get_workroom_details(
     metrics_by_user = {}
     for summary in user_kpi_summaries:
         raw_metrics = summary.kpi_breakdown or []
-        metric_map = {m.get("kpi_name"): m for m in raw_metrics}
+        metric_map = {}
+        for m in raw_metrics:
+            if isinstance(m, dict):
+                if "kpi_name" in m:
+                    metric_map[m["kpi_name"]] = m
 
         complete_metrics = []
         for kpi_name in expected_kpis:
