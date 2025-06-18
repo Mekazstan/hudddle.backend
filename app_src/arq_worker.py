@@ -1,5 +1,4 @@
 import logging
-from arq.jobs import Job
 from app_src.db.db_connect import async_session
 from app_src.mail import get_mail
 from app_src.config import Config
@@ -12,6 +11,34 @@ from app_src.arq_tasks import (
     process_workroom_end_session,
     email_daily_performance_to_managers
 )
+
+
+# Define startup and shutdown functions at module level
+async def startup(ctx):
+    logging.warning("🔥 Worker startup function has been triggered")
+    print("="*50)
+    print("STARTUP FUNCTION CALLED")
+    print("="*50)
+    logging.warning("🔥 Worker startup function has been triggered")
+
+    
+    try:
+        ctx['mail'] = get_mail()
+        ctx['session_maker'] = async_session
+        
+        # Test connections
+        await ctx['mail'].get_mail_server()
+        logging.info("✅ Mail server connection verified")
+        
+        logging.info("🚀 Worker startup complete")
+    except Exception as e:
+        logging.error(f"❌ Worker startup failed: {e}")
+        raise
+
+async def shutdown(ctx):
+    logging.info("🛑 Worker shutting down")
+    # Clean up resources if needed
+    pass
 
 class WorkerSettings:
     functions = [
@@ -35,22 +62,6 @@ class WorkerSettings:
     max_jobs = 10
     queue_name = "arq:queue"
     
-    async def startup(ctx):
-        logging.warning("🔥 Worker startup function has been triggered")
-        print("🔥 Worker startup function has been triggered")
-        ctx['mail'] = get_mail()
-        ctx['session_maker'] = async_session
-        
-        # Test connections
-        try:
-            await ctx['mail'].get_mail_server()
-            logging.info("✅ Mail server connection verified")
-        except Exception as e:
-            logging.error(f"❌ Mail server connection failed: {e}")
-            raise
-        
-        logging.info("🚀 Worker startup complete")
-
-    async def shutdown(ctx):
-        logging.info("🛑 Worker shutting down")
-        pass
+    # Reference the module-level functions
+    on_startup = startup
+    on_shutdown = shutdown

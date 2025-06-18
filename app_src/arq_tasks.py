@@ -33,7 +33,7 @@ async def send_email_task(ctx, email_data: dict, _job_try=0):
         logger.error(f"Failed to send email: {e}", exc_info=True)
         if _job_try > 3:
             logger.error("Job permanently failed after 3 tries")
-            return
+            raise
         await ctx['redis'].enqueue_job('send_email_task', email_data, _defer_by=60, _job_try=_job_try + 1)
         raise
 
@@ -164,17 +164,38 @@ async def send_workroom_invites(ctx, workroom_name, creator_name, recipient_emai
                     </html>
                     """
 
+    failed_emails = []
+    successful_emails = []
+    
     for email in recipient_emails:
         try:
             message = create_message(recipients=[email], subject=subject, body=email_body)
             await mail.send_message(message)
             logger.info(f"Email sent to {email}")
+            successful_emails.append(email)
         except Exception as e:
             logger.error(f"Failed to send to {email}: {e}")
-            if _job_try > 3:
-                logger.error("Job permanently failed after 3 tries")
-                return
-            await ctx['redis'].enqueue_job('send_workroom_invites', workroom_name, creator_name, recipient_emails, _defer_by=60, _job_try=_job_try + 1)
+            failed_emails.append(email)
+        
+        if failed_emails and _job_try < 3:
+            logger.info(f"Retrying {len(failed_emails)} failed emails")
+            await ctx['redis'].enqueue_job(
+                'send_workroom_invites', 
+                workroom_name, 
+                creator_name, 
+                failed_emails,
+                _defer_by=60, 
+                _job_try=_job_try + 1
+            )
+        elif failed_emails:
+            logger.error(f"Permanently failed to send to: {failed_emails}")
+        
+        return {
+            "status": "completed",
+            "successful": successful_emails,
+            "failed": failed_emails,
+            "workroom": workroom_name
+        }
 
 async def process_image_and_store_task(ctx, user_id, session_id, image_url, image_filename, timestamp_str, _job_try=0):
     if 'session_maker' not in ctx:
