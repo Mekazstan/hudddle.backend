@@ -346,78 +346,6 @@ def process_audio_and_store_report_task(user_id: str, session_id: str, audio_url
 
     loop.run_until_complete(inner())
 
-# @celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
-# def process_workroom_end_session(self, workroom_id: str, session_id: str, user_id: str):
-#     """
-#     Processes workroom session closure including:
-#     - Generating user summaries
-#     - Updating leaderboards
-#     - Calculating KPIs
-#     - Marking session as ended
-#     """
-#     try:
-#         # Convert IDs early to fail fast
-#         workroom_uuid = UUID(workroom_id)
-#         session_uuid = UUID(session_id)
-#         user_uuid = UUID(user_id)
-        
-#         # Initialize a new event loop for the async operations
-#         loop = asyncio.new_event_loop()
-#         asyncio.set_event_loop(loop)
-        
-#         # Update state before async operations
-#         self.update_state(state='PROGRESS', meta={'stage': 'starting'})
-        
-#         async def _async_process():
-#             # Initialize session explicitly
-#             session = async_session()
-#             try:
-#                 await session.begin()
-                
-#                 logger.info(f"📦 Starting closeout for session {session_id}")
-                
-#                 # 1. Run operations sequentially
-#                 await generate_user_session_summary(workroom_uuid, session_uuid, user_uuid, session)
-#                 self.update_state(state='PROGRESS', meta={'stage': 'generated_summaries'})
-                
-#                 await update_workroom_leaderboard(workroom_uuid, session)
-#                 self.update_state(state='PROGRESS', meta={'stage': 'updated_leaderboard'})
-                
-#                 await calculate_workroom_kpi_overview(workroom_uuid, session)
-#                 self.update_state(state='PROGRESS', meta={'stage': 'calculated_kpis'})
-                
-#                 # 2. Mark session as ended
-#                 live_session = await session.get(WorkroomLiveSession, session_uuid)
-#                 if not live_session:
-#                     logger.error(f"Session {session_id} not found")
-#                     return False
-                    
-#                 live_session.ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
-#                 live_session.is_active = False
-                
-#                 await session.commit()
-#                 logger.info(f"✅ Successfully closed session {session_id}")
-#                 return True
-                
-#             except Exception as e:
-#                 await session.rollback()
-#                 logger.error(f"❌ Database operation failed: {e}")
-#                 raise
-#             finally:
-#                 await session.close()
-
-#         # Execute with the new event loop
-#         success = loop.run_until_complete(_async_process())
-#         loop.close()
-        
-#         if not success:
-#             raise ValueError(f"Failed to process session {session_id}")
-
-#     except Exception as e:
-#         logger.error(f"❌ Critical error in session closeout: {e}", exc_info=True)
-#         self.retry(exc=e, countdown=60, max_retries=3)
-#         raise
-
 @celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
 def process_workroom_end_session(self, workroom_id: str, session_id: str, user_id: str):
     """
@@ -433,66 +361,62 @@ def process_workroom_end_session(self, workroom_id: str, session_id: str, user_i
         session_uuid = UUID(session_id)
         user_uuid = UUID(user_id)
         
-        # Create a new event loop for this task
+        # Initialize a new event loop for the async operations
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        try:
-            # Store task ID for use in async context
-            task_id = self.request.id
-            
-            async def _async_process():
-                # Initialize session explicitly
-                session = async_session()
-                try:
-                    await session.begin()
-                    
-                    logger.info(f"📦 Starting closeout for session {session_id}")
-                    
-                    # 1. Run operations sequentially
-                    await generate_user_session_summary(workroom_uuid, session_uuid, user_uuid, session)
-                    self.backend.store_result(task_id, None, "PROGRESS", {"stage": "generated_summaries"})
-                    
-                    await update_workroom_leaderboard(workroom_uuid, session)
-                    self.backend.store_result(task_id, None, "PROGRESS", {"stage": "updated_leaderboard"})
-                    
-                    await calculate_workroom_kpi_overview(workroom_uuid, session)
-                    self.backend.store_result(task_id, None, "PROGRESS", {"stage": "calculated_kpis"})
-                    
-                    # 2. Mark session as ended
-                    live_session = await session.get(WorkroomLiveSession, session_uuid)
-                    if not live_session:
-                        logger.error(f"Session {session_id} not found")
-                        return False
-                        
-                    live_session.ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                    live_session.is_active = False
-                    
-                    await session.commit()
-                    logger.info(f"✅ Successfully closed session {session_id}")
-                    return True
-                    
-                except Exception as e:
-                    await session.rollback()
-                    logger.error(f"❌ Database operation failed: {e}")
-                    raise
-                finally:
-                    await session.close()
-
-            # Execute with the new event loop
-            success = loop.run_until_complete(_async_process())
-            
-            if not success:
-                raise ValueError(f"Failed to process session {session_id}")
+        # Update state before async operations
+        self.update_state(state='PROGRESS', meta={'stage': 'starting'})
+        
+        async def _async_process():
+            # Initialize session explicitly
+            session = async_session()
+            try:
+                await session.begin()
                 
-            return success
-            
-        finally:
-            loop.close()
-            
+                logger.info(f"📦 Starting closeout for session {session_id}")
+                
+                # 1. Run operations sequentially
+                await generate_user_session_summary(workroom_uuid, session_uuid, user_uuid, session)
+                self.update_state(state='PROGRESS', meta={'stage': 'generated_summaries'})
+                
+                await update_workroom_leaderboard(workroom_uuid, session)
+                self.update_state(state='PROGRESS', meta={'stage': 'updated_leaderboard'})
+                
+                await calculate_workroom_kpi_overview(workroom_uuid, session)
+                self.update_state(state='PROGRESS', meta={'stage': 'calculated_kpis'})
+                
+                # 2. Mark session as ended
+                live_session = await session.get(WorkroomLiveSession, session_uuid)
+                if not live_session:
+                    logger.error(f"Session {session_id} not found")
+                    return False
+                    
+                live_session.ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                live_session.is_active = False
+                
+                await session.commit()
+                logger.info(f"✅ Successfully closed session {session_id}")
+                return True
+                
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"❌ Database operation failed: {e}")
+                raise
+            finally:
+                await session.close()
+
+        # Execute with the new event loop
+        success = loop.run_until_complete(_async_process())
+        loop.close()
+        
+        if not success:
+            raise ValueError(f"Failed to process session {session_id}")
+
     except Exception as e:
         logger.error(f"❌ Critical error in session closeout: {e}", exc_info=True)
         self.retry(exc=e, countdown=60, max_retries=3)
+        raise
 
 @celery_app.task()
 def email_daily_performance_to_managers():
