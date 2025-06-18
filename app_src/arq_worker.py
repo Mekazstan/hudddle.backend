@@ -1,6 +1,6 @@
 import logging
 from app_src.db.db_connect import async_session
-from app_src.mail import get_mail
+from app_src.mail import mail_service
 from app_src.config import Config
 from arq import cron
 from arq.connections import RedisSettings
@@ -12,6 +12,7 @@ from app_src.arq_tasks import (
     email_daily_performance_to_managers
 )
 
+logger = logging.getLogger('arq.worker')
 
 # Define startup and shutdown functions at module level
 async def startup(ctx):
@@ -23,14 +24,15 @@ async def startup(ctx):
 
     
     try:
-        ctx['mail'] = get_mail()
+        ctx['mail'] = mail_service
         ctx['session_maker'] = async_session
         
         # Test connections
-        await ctx['mail'].get_mail_server()
-        logging.info("✅ Mail server connection verified")
+        if not await ctx['mail'].test_connection():
+            raise ConnectionError("Failed to connect to mail server")
         
-        logging.info("🚀 Worker startup complete")
+        logger.info("✅ Mail server connection verified")
+        logger.info("🚀 Worker startup complete")
     except Exception as e:
         logging.error(f"❌ Worker startup failed: {e}")
         raise

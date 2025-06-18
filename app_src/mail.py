@@ -5,39 +5,57 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+logger = logging.getLogger(__name__)
 
-def get_mail_config():
-    return ConnectionConfig(
-        MAIL_USERNAME=Config.MAIL_USERNAME,
-        MAIL_PASSWORD=Config.MAIL_PASSWORD,
-        MAIL_FROM=Config.MAIL_FROM,
-        MAIL_PORT=Config.MAIL_PORT,
-        MAIL_SERVER=Config.MAIL_SERVER,
-        MAIL_FROM_NAME=Config.MAIL_FROM_NAME,
-        MAIL_STARTTLS=True,
-        MAIL_SSL_TLS=False,
-        USE_CREDENTIALS=True,
-        VALIDATE_CERTS=True,
-        TIMEOUT=10
-)
+class MailService:
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+    
+    def _initialize(self):
+        self.config = ConnectionConfig(
+            MAIL_USERNAME=Config.MAIL_USERNAME,
+            MAIL_PASSWORD=Config.MAIL_PASSWORD,
+            MAIL_FROM=Config.MAIL_FROM,
+            MAIL_PORT=Config.MAIL_PORT,
+            MAIL_SERVER=Config.MAIL_SERVER,
+            MAIL_FROM_NAME=Config.MAIL_FROM_NAME,
+            MAIL_STARTTLS=True,
+            MAIL_SSL_TLS=False,
+            USE_CREDENTIALS=True,
+            VALIDATE_CERTS=True,
+            TIMEOUT=10
+        )
+        self.mail = FastMail(self.config)
+    
+    async def test_connection(self):
+        """Test the SMTP connection by starting and closing a connection"""
+        try:
+            # Create a test message
+            message = MessageSchema(
+                recipients=["test@example.com"],
+                subject="Connection Test",
+                body="<p>Test</p>",
+                subtype="html"
+            )
+            
+            # This will implicitly test the connection
+            await self.mail.send_message(message)
+            return True
+        except Exception as e:
+            logger.error(f"Mail connection test failed: {e}")
+            return False
 
-_mail_instance = None
-
-def get_mail():
-    global _mail_instance
-    if _mail_instance is None:
-        _mail_instance = FastMail(get_mail_config())
-    return _mail_instance
-
+mail_service = MailService()
 
 def create_message(recipients: list[str], subject: str, body: str):
-
-    message = MessageSchema(
+    return MessageSchema(
         recipients=recipients,
         subject=subject,
         body=body,
         subtype="html"
     )
-
-    return message
-    
