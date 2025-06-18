@@ -41,6 +41,7 @@ services:
       HUDDDLE_LINK: ${HUDDDLE_LINK}
       MONGODB_URL: ${MONGODB_URL}
       MONGODB_NAME: ${MONGODB_NAME}
+      REDIS_URL: ${REDIS_URL}
     depends_on:
       - redis
   arq_worker:
@@ -79,6 +80,7 @@ services:
       HUDDDLE_LINK: ${HUDDDLE_LINK}
       MONGODB_URL: ${MONGODB_URL}
       MONGODB_NAME: ${MONGODB_NAME}
+      REDIS_URL: ${REDIS_URL}
     depends_on:
       - redis
       - api
