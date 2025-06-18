@@ -19,7 +19,7 @@ from app_src.config import Config
 from botocore.exceptions import ClientError
 from typing import List, Optional
 from groq import Groq
-from datetime import datetime
+from datetime import datetime, timezone
 from .schema import ImageAnalysisResult, UserDailyKPIReport
 
 
