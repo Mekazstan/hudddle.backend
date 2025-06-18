@@ -16,6 +16,8 @@ HUDDDLE_LINK = Config.HUDDDLE_LINK
 logger = logging.getLogger(__name__)
 
 async def send_email_task(ctx, email_data: dict, _job_try=0):
+    if 'mail' not in ctx:
+        raise RuntimeError("ARQ ctx['mail'] not set — did startup() run?")
     mail = ctx['mail']
     logger.info(f"Starting email send to {email_data['recipients']}")
     try:
@@ -36,6 +38,8 @@ async def send_email_task(ctx, email_data: dict, _job_try=0):
         raise
 
 async def send_workroom_invites(ctx, workroom_name, creator_name, recipient_emails, _job_try=0):
+    if 'mail' not in ctx:
+        raise RuntimeError("ARQ ctx['mail'] not set — did startup() run?")
     mail = ctx['mail']
     logger.info(f"Sending invites for workroom: {workroom_name} to {len(recipient_emails)} recipients")
     subject = f"Invitation to join {workroom_name}"
@@ -173,6 +177,8 @@ async def send_workroom_invites(ctx, workroom_name, creator_name, recipient_emai
             await ctx['redis'].enqueue_job('send_workroom_invites', workroom_name, creator_name, recipient_emails, _defer_by=60, _job_try=_job_try + 1)
 
 async def process_image_and_store_task(ctx, user_id, session_id, image_url, image_filename, timestamp_str, _job_try=0):
+    if 'session_maker' not in ctx:
+        raise RuntimeError("ARQ ctx['session_maker'] not set — did startup() run?")
     session_maker = ctx['session_maker']
     async with session_maker() as session:
         try:
@@ -216,6 +222,8 @@ async def process_image_and_store_task(ctx, user_id, session_id, image_url, imag
             raise
 
 async def process_workroom_end_session(ctx, workroom_id, session_id, user_id, _job_try=0):
+    if 'session_maker' not in ctx:
+        raise RuntimeError("ARQ ctx['session_maker'] not set — did startup() run?")
     session_maker = ctx['session_maker']
     async with session_maker() as session:
         try:
@@ -253,6 +261,8 @@ async def process_workroom_end_session(ctx, workroom_id, session_id, user_id, _j
             raise
 
 async def email_daily_performance_to_managers(ctx, _job_try=0):
+    if 'mail' not in ctx:
+        raise RuntimeError("ARQ ctx['mail'] not set — did startup() run?")
     mail = ctx['mail']
     try:
         session_maker = ctx['session_maker']

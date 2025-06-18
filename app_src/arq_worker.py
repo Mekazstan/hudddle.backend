@@ -36,18 +36,21 @@ class WorkerSettings:
     queue_name = "arq:queue"
     
     async def startup(ctx):
+        logging.warning("🔥 Worker startup function has been triggered")
+        print("🔥 Worker startup function has been triggered")
         ctx['mail'] = get_mail()
         ctx['session_maker'] = async_session
         
         # Test connections
         try:
             await ctx['mail'].get_mail_server()
-            logging.info("Mail server connection verified")
+            logging.info("✅ Mail server connection verified")
         except Exception as e:
-            logging.error(f"Mail server connection failed: {e}")
+            logging.error(f"❌ Mail server connection failed: {e}")
             raise
         
-        logging.info("Worker startup complete")
+        logging.info("🚀 Worker startup complete")
 
     async def shutdown(ctx):
+        logging.info("🛑 Worker shutting down")
         pass
