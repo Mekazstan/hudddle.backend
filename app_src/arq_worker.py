@@ -1,7 +1,7 @@
 import logging
 from arq.jobs import Job
 from app_src.db.db_connect import async_session
-from app_src.mail import mail
+from app_src.mail import get_mail
 from app_src.config import Config
 from arq import cron
 from arq.connections import RedisSettings
@@ -36,10 +36,18 @@ class WorkerSettings:
     queue_name = "arq:queue"
     
     async def startup(ctx):
+        ctx['mail'] = get_mail()
         ctx['session_maker'] = async_session
-        ctx['mail'] = mail
-        ctx['logger'] = logging.getLogger('arq_worker')
-        ctx['logger'].setLevel(logging.INFO)
+        
+        # Test connections
+        try:
+            await ctx['mail'].get_mail_server()
+            logging.info("Mail server connection verified")
+        except Exception as e:
+            logging.error(f"Mail server connection failed: {e}")
+            raise
+        
+        logging.info("Worker startup complete")
 
     async def shutdown(ctx):
         pass
