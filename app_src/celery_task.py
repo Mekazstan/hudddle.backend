@@ -16,7 +16,6 @@ from app_src.workroom.service import (analyze_image, calculate_workroom_kpi_over
     generate_user_session_summary, store_analysis_result, delete_s3_object, process_audio,
     store_audio_analysis_report, analyze_text_from_audio, update_workroom_leaderboard
 )
-from asgiref.sync import async_to_sync
 
 logger = get_task_logger(__name__)
 CELERY_BROKER_URL = Config.CELERY_BROKER_URL
@@ -58,13 +57,19 @@ def send_email_task(email_data: dict):
     try:
         logger.info(f"Starting email send to {email_data['recipients']}")
         
-        message = create_message(
-            recipients=email_data['recipients'],
-            subject=email_data['subject'],
-            body=email_data['body']
-        )
+        async def process():
+            message = create_message(
+                recipients=email_data['recipients'],
+                subject=email_data['subject'],
+                body=email_data['body']
+            )
+            await mail.send_message(message)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process())
+        loop.close()
         
-        async_to_sync(mail.send_message)(message)
         logger.info(f"Email successfully sent to {email_data['recipients']}")
         
         return {"status": "success", "recipients": email_data['recipients']}
@@ -201,18 +206,24 @@ def send_workroom_invites(workroom_name: str, creator_name: str, recipient_email
                         </html>
                         """
         
-        for email in recipient_emails:
-            try:
-                message = create_message(
-                    recipients=[email],
-                    subject=subject,
-                    body=email_body
-                )
-                async_to_sync(mail.send_message)(message)
-                logger.info(f"Email sent to {email}")
-            except Exception as e:
-                logger.error(f"Failed to send to {email}: {str(e)}")
-                continue
+        async def process():
+            for email in recipient_emails:
+                try:
+                    message = create_message(
+                        recipients=[email],
+                        subject=subject,
+                        body=email_body
+                    )
+                    await mail.send_message(message)
+                    logger.info(f"Email sent to {email}")
+                except Exception as e:
+                    logger.error(f"Failed to send to {email}: {str(e)}")
+                    continue
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process())
+        loop.close()
                 
     except Exception as e:
         logger.error(f"Task failed: {str(e)}")
@@ -268,9 +279,11 @@ def process_image_and_store_task(self, user_id: str, session_id: str, image_url:
                 await session.close()
 
         # Run the async process
-        result = async_to_sync(_async_process)()
-        if not result:
-            logger.warning("Task completed but no analysis result was produced")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(_async_process())
+        loop.close()
+
         return result
 
     except Exception as e:
@@ -437,10 +450,13 @@ def email_daily_performance_to_managers():
                     )
                     subject = f"🚀 Your Team's Daily Performance: {workroom.name}"
                     message = create_message([creator.email], subject, email_html)
-                    async_to_sync(mail.send_message)(message)
+                    await mail.send_message(message)
                     logging.info(f"Daily performance email sent to {creator.email}")
 
-        async_to_sync(process)()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process())
+        loop.close()
 
     except Exception as e:
         logging.error(f"Error sending manager emails: {str(e)}", exc_info=True)
