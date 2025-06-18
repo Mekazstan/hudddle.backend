@@ -7,9 +7,10 @@ from sqlalchemy.exc import SQLAlchemyError
 import logging
 
 # Import SQLAlchemy models and utilities
+from app_src.arq_tasks import get_password_reset_template
 from app_src.db.models import User, PasswordResetOTP
 from app_src.db.db_connect import get_session
-from app_src.celery_task import get_password_reset_template, send_email_task
+from app_src.redis_config import get_redis_pool
 from .schema import (
     ForgotPassword, Message, PasswordResetOTPRequest,
     UserCreateModel, UserLoginModel, AuthToken,
@@ -23,6 +24,7 @@ from .dependencies import (AccessTokenBearer, get_current_user,
 from app_src.config import Config
 import random
 from datetime import datetime, timedelta
+from arq.connections import ArqRedis
 
 # Router and service setup
 auth_router = APIRouter()
@@ -184,7 +186,8 @@ async def get_me(
 @auth_router.post("/password-reset-request")
 async def password_reset_request(
     email_data: ForgotPassword,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     try:
         user = await user_service.get_user_by_email(email_data.email, session)
@@ -212,13 +215,17 @@ async def password_reset_request(
                 )
             )
         
-        email_task = send_email_task.delay({
-            "recipients": [email_data.email],
-            "subject": "Your Password Reset OTP",
-            "body": get_password_reset_template(otp)
-        })
+        # Create ARQ Redis pool
+        job = await redis.enqueue_job(
+            'send_email_task',
+            {
+                "recipients": [email_data.email],
+                "subject": "Your Password Reset OTP",
+                "body": get_password_reset_template(otp)
+            }
+        )
 
-        logging.info(f"Password reset OTP generated for {email_data.email}, task ID: {email_task.id}")
+        logging.info(f"Password reset OTP generated for {email_data.email}, job ID: {job.job_id}")
 
         return {"message": "OTP sent to your email (processing in background)"}
     except SQLAlchemyError as e:

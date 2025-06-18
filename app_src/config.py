@@ -27,12 +27,11 @@ class Settings(BaseSettings):
     AWS_REGION : str
     GROQ_API_KEY: str
     DG_API_KEY: str
-    CELERY_BROKER_URL: str
-    CELERY_RESULT_BACKEND: str
     DOMAIN: str
     HUDDDLE_LINK: str
     MONGODB_URL: str
     MONGODB_NAME: str
+    REDIS_URL: str
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parent.parent / ".env",

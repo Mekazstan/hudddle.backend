@@ -37,21 +37,17 @@ services:
       AWS_REGION: ${AWS_REGION}
       GROQ_API_KEY: ${GROQ_API_KEY}
       DG_API_KEY: ${DG_API_KEY}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
       MONGODB_URL: ${MONGODB_URL}
       MONGODB_NAME: ${MONGODB_NAME}
     depends_on:
       - redis
-  celery_worker:
-    container_name: celery_worker_1
-    command: celery -A app_src.celery_task worker --loglevel=info --autoscale=1,10 -Q emails,images,sessions
-    build:
-      context: .
-      dockerfile: Dockerfile
+  arq_worker:
+    container_name: arq_worker
+    build: .
     working_dir: /app
+    command: arq app_src.arq_worker.WorkerSettings
     environment:
       PYTHONPATH: /app
       DATABASE_URL: ${DATABASE_URL}
@@ -79,8 +75,6 @@ services:
       AWS_REGION: ${AWS_REGION}
       GROQ_API_KEY: ${GROQ_API_KEY}
       DG_API_KEY: ${DG_API_KEY}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DOMAIN: ${DOMAIN}
       HUDDDLE_LINK: ${HUDDDLE_LINK}
       MONGODB_URL: ${MONGODB_URL}
@@ -88,19 +82,3 @@ services:
     depends_on:
       - redis
       - api
-  flower:
-    container_name: celery_flower
-    image: mher/flower
-    command: celery flower --broker=${CELERY_BROKER_URL} --address=0.0.0.0 --port=5555
-    environment:
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-      FLOWER_BASIC_AUTH: ${FLOWER_USER}:${FLOWER_PASSWORD}
-      FLOWER_PURGE_OFFLINE_WORKERS: 30
-      FLOWER_PERSISTENT: True
-    ports:
-      - "5555:5555"
-    depends_on:
-      - redis
-      - celery_worker
-

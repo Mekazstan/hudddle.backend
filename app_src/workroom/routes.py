@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
+from app_src.redis_config import get_redis_pool
 from .service import upload_audio_to_s3
 from .schema import (FullMemberSchema, LeaderboardEntrySchema, MemberMetricSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomCreate, WorkroomDetailsSchema, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
@@ -21,12 +22,8 @@ from datetime import datetime, timezone, date
 import boto3
 from botocore.exceptions import ClientError
 from app_src.config import Config
-from app_src.celery_task import (
-    process_image_and_store_task,
-    process_audio_and_store_report_task,
-    process_workroom_end_session,
-    send_workroom_invites
-)
+from arq.connections import ArqRedis
+
 
 workroom_router = APIRouter()
 
@@ -220,6 +217,7 @@ async def create_workroom(
     workroom_data: WorkroomCreate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    redis: ArqRedis = Depends(get_redis_pool),
 ):
     try:
         # Create the Workroom
@@ -324,10 +322,11 @@ async def create_workroom(
 
         # 9. Send invites to non-members
         if emails_to_invite:
-            send_workroom_invites.delay(
-                workroom_name=new_workroom.name,
-                creator_name=current_user.first_name or "Someone",
-                recipient_emails=emails_to_invite
+            await redis.enqueue_job(
+                'send_workroom_invites',
+                new_workroom.name,
+                current_user.first_name or "Someone",
+                emails_to_invite
             )
 
         await session.commit()
@@ -787,6 +786,7 @@ async def add_members_to_workroom(
     emails: List[str] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     today = date.today()
     statement = select(Workroom).options(selectinload(Workroom.members)).where(Workroom.id == workroom_id)
@@ -861,10 +861,11 @@ async def add_members_to_workroom(
     
     # Send invites to non-member emails if any
     if non_member_emails:
-        send_workroom_invites.delay(
-            workroom_name=workroom.name,
-            creator_name=current_user.first_name or "Someone",
-            recipient_emails=non_member_emails
+        await redis.enqueue_job(
+            'send_workroom_invites',
+            workroom.name,
+            current_user.first_name or "Someone",
+            non_member_emails
         )
     
     # Refresh and return updated workroom
@@ -1104,6 +1105,7 @@ async def end_live_session(
     session_id: UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     """Trigger the background task to end a live session in the workroom."""
     try:
@@ -1132,25 +1134,22 @@ async def end_live_session(
         await session.commit()
 
         # 3. Enqueue task with proper monitoring
-        task = process_workroom_end_session.apply_async(
-            kwargs={
-                'workroom_id': str(workroom_id),
-                'session_id': str(session_id),
-                'user_id': str(current_user.id)
-            },
-            queue='sessions',
-            priority=5,
-            expires=3600
+        job = await redis.enqueue_job(
+            'process_workroom_end_session',
+            str(workroom_id),
+            str(session_id),
+            str(current_user.id)
         )
 
         logging.info(
-            f"Started session closeout task {task.id} for "
+            f"Started session closeout job {job.job_id} for "
             f"workroom:{workroom_id} session:{session_id}"
         )
 
         return {
             "message": "Session end processing started",
-            "session_id": str(session_id)
+            "session_id": str(session_id),
+            "job_id": job.job_id
         }
 
     except SQLAlchemyError as e:
@@ -1171,7 +1170,8 @@ async def analyze_screenshot(
     session_id: UUID,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     """
     Receives a screenshot, uploads it to S3, and triggers the image analysis and data storage.
@@ -1227,22 +1227,20 @@ async def analyze_screenshot(
 
         image_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{image_filename}"
 
-        task = process_image_and_store_task.apply_async(
-            kwargs={
-                'user_id': str(current_user.id),
-                'session_id': str(session_id),
-                'image_url': image_url,
-                'image_filename': image_filename,
-                'timestamp_str': timestamp.isoformat()
-            },
-            queue='images',
-            priority=6,
-            expires=3600)
+        # Enqueue the image processing task
+        job = await redis.enqueue_job(
+            'process_image_and_store_task',
+            str(current_user.id),
+            str(session_id),
+            image_url,
+            image_filename,
+            timestamp.isoformat()
+        )
 
         return {
             "message": "Screenshot received for processing", 
             "image_url": image_url,
-            "task_id": task.id
+            "job_id": job.job_id
         }
     except HTTPException:
         raise
@@ -1253,58 +1251,58 @@ async def analyze_screenshot(
             detail="An unexpected error occurred",
         )
 
-@workroom_router.post("/analyze_audio")
-async def analyze_audio(
-    session_id: UUID,
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Endpoint to receive and process audio files using Celery.
-    """
-    try:
-        timestamp = datetime.now(timezone.utc)
-        user_id = current_user.id
+# @workroom_router.post("/analyze_audio")
+# async def analyze_audio(
+#     session_id: UUID,
+#     file: UploadFile = File(...),
+#     current_user: User = Depends(get_current_user),
+# ):
+#     """
+#     Endpoint to receive and process audio files using Celery.
+#     """
+#     try:
+#         timestamp = datetime.now(timezone.utc)
+#         user_id = current_user.id
 
-        # Validate file type
-        if not file.content_type.startswith("audio/"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only audio files are allowed",
-            )
+#         # Validate file type
+#         if not file.content_type.startswith("audio/"):
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail="Only audio files are allowed",
+#             )
 
-        # Upload the audio file to S3
-        audio_url, audio_s3_key = await upload_audio_to_s3(
-            file, user_id, session_id, timestamp.strftime("%Y%m%d_%H%M%S")
-        )
-        if not audio_url:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to upload audio to S3",
-            )
+#         # Upload the audio file to S3
+#         audio_url, audio_s3_key = await upload_audio_to_s3(
+#             file, user_id, session_id, timestamp.strftime("%Y%m%d_%H%M%S")
+#         )
+#         if not audio_url:
+#             raise HTTPException(
+#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#                 detail="Failed to upload audio to S3",
+#             )
 
-        # Trigger Celery task for background processing
-        process_audio_and_store_report_task.apply_async(
-            kwargs={
-                'user_id': str(user_id),
-                'session_id': str(session_id),
-                'audio_url': audio_url,
-                'audio_s3_key': audio_s3_key,
-                'timestamp_str': timestamp.isoformat()
-            })
+#         # Trigger Celery task for background processing
+#         process_audio_and_store_report_task.apply_async(
+#             kwargs={
+#                 'user_id': str(user_id),
+#                 'session_id': str(session_id),
+#                 'audio_url': audio_url,
+#                 'audio_s3_key': audio_s3_key,
+#                 'timestamp_str': timestamp.isoformat()
+#             })
 
-        return (
-            {"message": "Audio received for analysis. Processing in background."},
-            status.HTTP_202_ACCEPTED,
-        )
+#         return (
+#             {"message": "Audio received for analysis. Processing in background."},
+#             status.HTTP_202_ACCEPTED,
+#         )
 
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logging.error(f"Error processing audio: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing audio: {str(e)}",
-        )
+#     except HTTPException as e:
+#         raise e
+#     except Exception as e:
+#         logging.error(f"Error processing audio: {e}")
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Error processing audio: {str(e)}",
+#         )
         
         
