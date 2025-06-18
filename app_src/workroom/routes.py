@@ -550,12 +550,20 @@ async def get_workroom_details(
 
         kpi_summary = None
         if summary is not None:
+            # Safe processing of kpi_breakdown
+            processed_breakdown = []
+            if summary.kpi_breakdown:
+                for metric in summary.kpi_breakdown:
+                    if isinstance(metric, dict):
+                        try:
+                            processed_breakdown.append(MemberMetricSchema(**metric))
+                        except Exception as e:
+                            logging.warning(f"Skipping invalid metric for user {member.id}: {metric}. Error: {e}")
+            
             kpi_summary = UserKPISummarySchema(
                 overall_alignment_percentage=summary.overall_alignment_percentage,
                 summary_text=summary.summary_text,
-                kpi_breakdown=[
-                    MemberMetricSchema(**metric) for metric in (summary.kpi_breakdown or [])
-                ]
+                kpi_breakdown=processed_breakdown
             )
         else:
             kpi_summary = {
@@ -632,13 +640,20 @@ async def get_workroom_details(
 
     workroom_kpi_summary = None
     if wr_kpi_summary is not None:
+        # Safe processing of kpi_breakdown
+        processed_breakdown = []
+        if wr_kpi_summary.kpi_breakdown:
+            for metric in wr_kpi_summary.kpi_breakdown:
+                if isinstance(metric, dict):
+                    try:
+                        processed_breakdown.append(MemberMetricSchema(**metric))
+                    except Exception as e:
+                        logging.warning(f"Skipping invalid metric for workroom {workroom.id}: {metric}. Error: {e}")
+        
         workroom_kpi_summary = WorkroomKPISummarySchema(
             overall_alignment_percentage=wr_kpi_summary.overall_alignment_percentage,
             summary_text=wr_kpi_summary.summary_text,
-            kpi_breakdown=[
-                MemberMetricSchema(**metric)
-                for metric in (wr_kpi_summary.kpi_breakdown or [])
-            ]
+            kpi_breakdown=processed_breakdown
         )
     else:
         workroom_kpi_summary = {
@@ -912,12 +927,20 @@ async def get_workroom_members(
         summary = summary_by_user.get(member.id)
         
         if summary:
+            # Safe processing of kpi_breakdown
+            processed_breakdown = []
+            if summary.kpi_breakdown:
+                for metric in summary.kpi_breakdown:
+                    if isinstance(metric, dict):
+                        try:
+                            processed_breakdown.append(MemberMetricSchema(**metric))
+                        except Exception as e:
+                            logging.warning(f"Skipping invalid metric for user {member.id}: {metric}. Error: {e}")
+            
             kpi_summary = UserKPISummarySchema(
                 overall_alignment_percentage=summary.overall_alignment_percentage,
                 summary_text=summary.summary_text,
-                kpi_breakdown=[
-                    MemberMetricSchema(**metric) for metric in (summary.kpi_breakdown or [])
-                ]
+                kpi_breakdown=processed_breakdown
             )
         else:
             kpi_summary = {
