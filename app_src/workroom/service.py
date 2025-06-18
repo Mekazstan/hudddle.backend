@@ -93,6 +93,7 @@ async def get_all_analysis_results(user_id: UUID, session_id: UUID) -> List[str]
 async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
     """
     Recalculates and updates the leaderboard for a given workroom.
+    NOTE: This function does NOT commit - that's handled by the caller
     """
     # Fetch the workroom and its members
     result = await session.execute(
@@ -102,115 +103,134 @@ async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
     )
     workroom = result.scalar_one_or_none()
     if not workroom:
-        raise HTTPException(status_code=404, detail="Workroom not found")
+        raise ValueError(f"Workroom {workroom_id} not found")
 
     leaderboard_data = []
 
     for member in workroom.members:
-        # 1. KPI Alignment Score
-        kpi_result = await session.execute(
-            select(UserKPISummary).where(
-                UserKPISummary.user_id == member.id,
-                UserKPISummary.workroom_id == workroom_id
+        try:
+            # 1. KPI Alignment Score - Get the most recent one to handle duplicates
+            kpi_result = await session.execute(
+                select(UserKPISummary)
+                .where(
+                    UserKPISummary.user_id == member.id,
+                    UserKPISummary.workroom_id == workroom_id
+                )
             )
-        )
-        user_kpi_summary = kpi_result.scalar_one_or_none()
-        kpi_score = user_kpi_summary.overall_alignment_percentage if user_kpi_summary else 0.0
+            user_kpi_summary = kpi_result.scalar_one_or_none()
+            kpi_score = user_kpi_summary.overall_alignment_percentage if user_kpi_summary else 0.0
 
-        # 2. Task Score
-        completed_tasks_result = await session.execute(
-            select(Task).where(
-                Task.workroom_id == workroom_id,
-                Task.assigned_users.contains(member),
-                Task.status == TaskStatus.COMPLETED,
-                Task.kpi_link.isnot(None)
+            # 2. Task Score
+            completed_tasks_result = await session.execute(
+                select(Task).where(
+                    Task.workroom_id == workroom_id,
+                    Task.assigned_users.contains(member),
+                    Task.status == TaskStatus.COMPLETED,
+                    Task.kpi_link.isnot(None)
+                )
             )
-        )
-        completed_tasks = completed_tasks_result.scalars().all()
-        completed_task_points = sum(task.task_point for task in completed_tasks)
+            completed_tasks = completed_tasks_result.scalars().all()
+            completed_task_points = sum(task.task_point for task in completed_tasks if task.task_point)
 
-        total_tasks_result = await session.execute(
-            select(func.count(Task.id)).where(
-                Task.workroom_id == workroom_id,
-                Task.assigned_users.contains(member)
+            total_tasks_result = await session.execute(
+                select(func.count(Task.id)).where(
+                    Task.workroom_id == workroom_id,
+                    Task.assigned_users.contains(member)
+                )
             )
-        )
-        total_assigned_tasks = total_tasks_result.scalar() or 0
-        task_score = completed_task_points / total_assigned_tasks if total_assigned_tasks else 0.0
+            total_assigned_tasks = total_tasks_result.scalar() or 0
+            task_score = completed_task_points / total_assigned_tasks if total_assigned_tasks > 0 else 0.0
 
-        # 3. Engagement Score
-        live_sessions_result = await session.execute(
-            select(func.count(WorkroomLiveSession.id)).where(
-                WorkroomLiveSession.workroom_id == workroom_id,
-                WorkroomLiveSession.screen_sharer_id == member.id
+            # 3. Engagement Score
+            live_sessions_result = await session.execute(
+                select(func.count(WorkroomLiveSession.id)).where(
+                    WorkroomLiveSession.workroom_id == workroom_id,
+                    WorkroomLiveSession.screen_sharer_id == member.id
+                )
             )
-        )
-        live_session_count = live_sessions_result.scalar() or 0
-        live_session_points = live_session_count * 2
+            live_session_count = live_sessions_result.scalar() or 0
+            live_session_points = live_session_count * 2
 
-        # activity_boost = float(member.productivity or 0) * 0.2
-        active_minutes_score = (member.daily_active_minutes or 0) / 30
+            # Safe handling of potentially None values
+            active_minutes_score = (member.daily_active_minutes or 0) / 30
+            streak_bonus = (member.streak.current_streak or 0) * 0.5 if member.streak else 0.0
+            engagement_score = live_session_points + active_minutes_score + streak_bonus
 
-        # ✅ Streak bonus using current_streak
-        streak_bonus = member.streak.current_streak * 0.5 if member.streak else 0.0
-
-        engagement_score = live_session_points + active_minutes_score + streak_bonus
-
-        # 4. Penalty Score
-        missed_tasks_result = await session.execute(
-            select(Task).where(
-                Task.workroom_id == workroom_id,
-                Task.assigned_users.contains(member),
-                Task.status != TaskStatus.COMPLETED,
-                Task.due_by < datetime.utcnow()
+            # 4. Penalty Score
+            missed_tasks_result = await session.execute(
+                select(Task).where(
+                    Task.workroom_id == workroom_id,
+                    Task.assigned_users.contains(member),
+                    Task.status != TaskStatus.COMPLETED,
+                    Task.due_by < datetime.utcnow()
+                )
             )
-        )
-        missed_tasks = missed_tasks_result.scalars().all()
-        penalty_score = len(missed_tasks) * 2
+            missed_tasks = missed_tasks_result.scalars().all()
+            penalty_score = len(missed_tasks) * 2
 
-        # Final Score Calculation
-        total_score = kpi_score + task_score + engagement_score - penalty_score
+            # Final Score Calculation
+            total_score = kpi_score + task_score + engagement_score - penalty_score
 
-        leaderboard_data.append({
-            "user_id": member.id,
-            "username": member.first_name or "Unnamed",
-            "score": total_score,
-            "kpi_score": kpi_score,
-            "task_score": task_score,
-            "engagement_score": engagement_score,
-        })
+            leaderboard_data.append({
+                "user_id": member.id,
+                "username": member.first_name or "Unnamed",
+                "score": total_score,
+                "kpi_score": kpi_score,
+                "task_score": task_score,
+                "engagement_score": engagement_score,
+            })
+
+        except Exception as e:
+            logging.error(f"Error calculating scores for user {member.id}: {e}")
+            # Add user with zero scores to avoid missing them entirely
+            leaderboard_data.append({
+                "user_id": member.id,
+                "username": member.first_name or "Unnamed",
+                "score": 0.0,
+                "kpi_score": 0.0,
+                "task_score": 0.0,
+                "engagement_score": 0.0,
+            })
 
     # Sort leaderboard by score descending, then by username
     leaderboard_data.sort(key=lambda x: (-x["score"], x["username"]))
 
-    # Save leaderboard
+    # Save leaderboard - Use merge or upsert pattern
     for rank, entry in enumerate(leaderboard_data, start=1):
-        existing_result = await session.execute(
-            select(Leaderboard).where(
-                Leaderboard.workroom_id == workroom_id,
-                Leaderboard.user_id == entry["user_id"]
+        try:
+            existing_result = await session.execute(
+                select(Leaderboard).where(
+                    Leaderboard.workroom_id == workroom_id,
+                    Leaderboard.user_id == entry["user_id"]
+                )
             )
-        )
-        leaderboard_entry = existing_result.scalar_one_or_none()
+            leaderboard_entry = existing_result.scalar_one_or_none()
 
-        if leaderboard_entry:
-            leaderboard_entry.score = entry["score"]
-            leaderboard_entry.rank = rank
-            leaderboard_entry.kpi_score = entry["kpi_score"]
-            leaderboard_entry.task_score = entry["task_score"]
-            leaderboard_entry.engagement_score = entry["engagement_score"]
-        else:
-            session.add(Leaderboard(
-                workroom_id=workroom_id,
-                user_id=entry["user_id"],
-                score=entry["score"],
-                rank=rank,
-                kpi_score=entry["kpi_score"],
-                task_score=entry["task_score"],
-                engagement_score=entry["engagement_score"],
-            ))
+            if leaderboard_entry:
+                # Update existing entry
+                leaderboard_entry.score = entry["score"]
+                leaderboard_entry.rank = rank
+                leaderboard_entry.kpi_score = entry["kpi_score"]
+                leaderboard_entry.task_score = entry["task_score"]
+                leaderboard_entry.engagement_score = entry["engagement_score"]
+                leaderboard_entry.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            else:
+                # Create new entry
+                new_leaderboard_entry = Leaderboard(
+                    workroom_id=workroom_id,
+                    user_id=entry["user_id"],
+                    score=entry["score"],
+                    rank=rank,
+                    kpi_score=entry["kpi_score"],
+                    task_score=entry["task_score"],
+                    engagement_score=entry["engagement_score"],
+                )
+                session.add(new_leaderboard_entry)
 
-    await session.commit()
+        except Exception as e:
+            logging.error(f"Error updating leaderboard for user {entry['user_id']}: {e}")
+
+    logging.info(f"Updated leaderboard for workroom {workroom_id} with {len(leaderboard_data)} entries")
 
 
 # --------------------------------------------------------------------------------

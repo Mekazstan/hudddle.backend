@@ -248,7 +248,7 @@ async def process_workroom_end_session(ctx, workroom_id, session_id, user_id, _j
     session_maker = ctx['session_maker']
     async with session_maker() as session:
         try:
-            await session.begin()
+            # await session.begin()
             workroom_uuid = UUID(workroom_id)
             session_uuid = UUID(session_id)
             user_uuid = UUID(user_id)
@@ -263,6 +263,7 @@ async def process_workroom_end_session(ctx, workroom_id, session_id, user_id, _j
             live_session = await session.get(WorkroomLiveSession, session_uuid)
             if not live_session:
                 logger.error("Session not found")
+                await session.rollback()
                 return False
 
             live_session.ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -272,8 +273,7 @@ async def process_workroom_end_session(ctx, workroom_id, session_id, user_id, _j
             logger.info("✅ Session closed")
             return True
         except Exception as e:
-            if session.in_transaction():
-                await session.rollback()
+            await session.rollback()
             logger.error(f"❌ Error closing session: {e}", exc_info=True)
             if _job_try > 3:
                 logger.error("Job permanently failed after 3 tries")

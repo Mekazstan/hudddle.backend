@@ -318,7 +318,7 @@ async def create_workroom(
         created_metrics = performance_metrics_result.scalars().all()
         
         # 8. Initialize KPI structures
-        await initialize_kpi_data_for_workroom(session, new_workroom, all_members, created_metrics)
+        # await initialize_kpi_data_for_workroom(session, new_workroom, all_members, created_metrics)
 
         # 9. Send invites to non-members
         if emails_to_invite:
@@ -830,29 +830,29 @@ async def add_members_to_workroom(
                     workroom_id=workroom_id,
                     user_id=user.id
                 ))
-            # Build default KPI breakdown
-            kpi_breakdown = [
-                {"kpi_name": metric.kpi_name, "percentage": 0, "weight": metric.weight} for metric in performance_metrics
-            ]
+            # # Build default KPI breakdown
+            # kpi_breakdown = [
+            #     {"kpi_name": metric.kpi_name, "percentage": 0, "weight": metric.weight} for metric in performance_metrics
+            # ]
 
-            # Create UserKPISummary
-            session.add(UserKPISummary(
-                user_id=user.id,
-                workroom_id=workroom_id,
-                date=datetime.utcnow().date(),
-                overall_alignment_percentage=0,
-                kpi_breakdown=kpi_breakdown,
-                summary_text=f"No summary for {user.first_name or user.email}"
-            ))
+            # # Create UserKPISummary
+            # session.add(UserKPISummary(
+            #     user_id=user.id,
+            #     workroom_id=workroom_id,
+            #     date=datetime.utcnow().date(),
+            #     overall_alignment_percentage=0,
+            #     kpi_breakdown=kpi_breakdown,
+            #     summary_text=f"No summary for {user.first_name or user.email}"
+            # ))
 
-            # Create UserKPIMetricHistory entries
-            session.add(UserKPIMetricHistory(
-                user_id=user.id,
-                workroom_id=workroom_id,
-                kpi_name=f"{today} - Overall Alignment",
-                date=datetime.utcnow().date(),
-                alignment_percentage=0
-            ))
+            # # Create UserKPIMetricHistory entries
+            # session.add(UserKPIMetricHistory(
+            #     user_id=user.id,
+            #     workroom_id=workroom_id,
+            #     kpi_name=f"{today} - Overall Alignment",
+            #     date=datetime.utcnow().date(),
+            #     alignment_percentage=0
+            # ))
 
         else:
             non_member_emails.append(email_lower)
