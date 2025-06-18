@@ -231,15 +231,12 @@ def send_workroom_invites(workroom_name: str, creator_name: str, recipient_email
 
 @celery_app.task(bind=True)
 def process_image_and_store_task(self, user_id: str, session_id: str, image_url: str, image_filename: str, timestamp_str: str):
-    try:
-        timestamp = datetime.fromisoformat(timestamp_str)
-        
-        async def _async_process():
-            # Initialize session outside try block to ensure proper cleanup
-            session = async_session()
+    async def _async_process():
+        async with async_session() as session:
             try:
                 await session.begin()
-                
+                timestamp = datetime.fromisoformat(timestamp_str)
+                    
                 # Sequential queries instead of parallel
                 workroom_live_session = await session.get(WorkroomLiveSession, session_id)
                 if not workroom_live_session:
@@ -271,24 +268,19 @@ def process_image_and_store_task(self, user_id: str, session_id: str, image_url:
                 # Delete S3 object after successful commit
                 await delete_s3_object(image_filename)
                 return analysis_result
-                
+
             except Exception as e:
                 await session.rollback()
+                logger.error(f"Error during async session: {e}")
                 raise
-            finally:
-                await session.close()
-
-        # Run the async process
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(_async_process())
-        loop.close()
-
+    try:
+        result = asyncio.run(_async_process())
         return result
 
     except Exception as e:
         logger.error(f"Image processing task failed: {e}", exc_info=True)
         self.retry(exc=e, countdown=60)
+        raise e
   
 @celery_app.task()
 def process_audio_and_store_report_task(user_id: str, session_id: str, audio_url: str, audio_s3_key: str, timestamp_str: str):
@@ -361,75 +353,58 @@ def process_audio_and_store_report_task(user_id: str, session_id: str, audio_url
 
 @celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
 def process_workroom_end_session(self, workroom_id: str, session_id: str, user_id: str):
-    """
-    Processes workroom session closure including:
-    - Generating user summaries
-    - Updating leaderboards
-    - Calculating KPIs
-    - Marking session as ended
-    """
-    try:
-        # Convert IDs early to fail fast
-        workroom_uuid = UUID(workroom_id)
-        session_uuid = UUID(session_id)
-        user_uuid = UUID(user_id)
-        
-        # Initialize a new event loop for the async operations
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Update state before async operations
-        self.update_state(state='PROGRESS', meta={'stage': 'starting'})
-        
-        async def _async_process():
-            # Initialize session explicitly
-            session = async_session()
+    import asyncio
+    from uuid import UUID
+
+    async def _async_process():
+        async with async_session() as session:
             try:
                 await session.begin()
-                
+
+                # Validate IDs
+                workroom_uuid = UUID(workroom_id)
+                session_uuid = UUID(session_id)
+                user_uuid = UUID(user_id)
+
                 logger.info(f"📦 Starting closeout for session {session_id}")
-                
-                # 1. Run operations sequentially
+
+                # Run operations
                 await generate_user_session_summary(workroom_uuid, session_uuid, user_uuid, session)
                 self.update_state(state='PROGRESS', meta={'stage': 'generated_summaries'})
-                
+
                 await update_workroom_leaderboard(workroom_uuid, session)
                 self.update_state(state='PROGRESS', meta={'stage': 'updated_leaderboard'})
-                
+
                 await calculate_workroom_kpi_overview(workroom_uuid, session)
                 self.update_state(state='PROGRESS', meta={'stage': 'calculated_kpis'})
-                
-                # 2. Mark session as ended
+
+                # Mark session as ended
                 live_session = await session.get(WorkroomLiveSession, session_uuid)
                 if not live_session:
                     logger.error(f"Session {session_id} not found")
                     return False
-                    
+
                 live_session.ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 live_session.is_active = False
-                
+
                 await session.commit()
                 logger.info(f"✅ Successfully closed session {session_id}")
                 return True
-                
+
             except Exception as e:
                 await session.rollback()
                 logger.error(f"❌ Database operation failed: {e}")
                 raise
-            finally:
-                await session.close()
 
-        # Execute with the new event loop
-        success = loop.run_until_complete(_async_process())
-        loop.close()
-        
+    try:
+        success = asyncio.run(_async_process())
         if not success:
             raise ValueError(f"Failed to process session {session_id}")
-
+        return success
     except Exception as e:
         logger.error(f"❌ Critical error in session closeout: {e}", exc_info=True)
         self.retry(exc=e, countdown=60, max_retries=3)
-        raise
+        raise e
 
 @celery_app.task()
 def email_daily_performance_to_managers():
