@@ -171,11 +171,11 @@ async def send_workroom_invites(ctx, workroom_name, creator_name, recipient_emai
         try:
             message = create_message(recipients=[email], subject=subject, body=email_body)
             await mail.send_message(message)
-            logger.info(f"Email sent to {email}")
             successful_emails.append(email)
+            logger.info(f"✅ Email sent to {email}")
         except Exception as e:
-            logger.error(f"Failed to send to {email}: {e}")
             failed_emails.append(email)
+            logger.error(f"❌ Failed to send to {email}: {e}")
         
         if failed_emails and _job_try < 3:
             logger.info(f"Retrying {len(failed_emails)} failed emails")

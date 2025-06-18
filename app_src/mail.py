@@ -49,6 +49,15 @@ class MailService:
         except Exception as e:
             logger.error(f"Mail connection test failed: {e}")
             return False
+        
+    async def send_message(self, message):
+        """Public method to send emails"""
+        try:
+            await self.mail.send_message(message)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send email: {e}")
+            raise
 
 mail_service = MailService()
 
