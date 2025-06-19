@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
-from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
+from typing import Union, Dict, List, Any, Optional
 from app_src.db.models import TaskStatus
 from datetime import datetime
 from uuid import UUID
@@ -94,13 +94,34 @@ class WorkroomKPIMetricHistorySchema(BaseModel):
     
 class MemberMetricSchema(BaseModel):
     kpi_name: str
-    weight: int
+    percentage: float
+    weight: Optional[float] = None
     metric_value: Optional[float] = None
 
 class WorkroomKPISummarySchema(BaseModel):
     overall_alignment_percentage: float
-    summary_text: Optional[str]
-    kpi_breakdown: List[MemberMetricSchema]
+    summary_text: Optional[str] = None
+    kpi_breakdown: Union[List[MemberMetricSchema], Dict[str, float]]  # Accepts both formats
+
+    @field_validator('kpi_breakdown', mode='before')
+    def validate_kpi_breakdown(cls, v):
+        if isinstance(v, dict):
+            # Convert dict to list of MemberMetricSchema if needed
+            return [{"kpi_name": k, "percentage": v} for k, v in v.items()]
+        return v
+    
+class KPIBreakdownType(BaseModel):
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        # Accept either a list of MemberMetricSchema or a dictionary
+        return {
+            'type': 'union',
+            'choices': [
+                {'type': 'list', 'items': handler(MemberMetricSchema)},
+                {'type': 'dict', 'keys': {'type': 'str'}, 'values': {'type': 'float'}}
+            ]
+        }
+
 
 class UserKPIMetricHistorySchema(BaseModel):
     kpi_name: str
@@ -109,8 +130,15 @@ class UserKPIMetricHistorySchema(BaseModel):
     
 class UserKPISummarySchema(BaseModel):
     overall_alignment_percentage: float
-    summary_text: Optional[str]
-    kpi_breakdown: List[MemberMetricSchema]
+    summary_text: Optional[str] = None
+    kpi_breakdown: Union[List[MemberMetricSchema], Dict[str, float]]  # Accepts both formats
+
+    @field_validator('kpi_breakdown', mode='before')
+    def validate_kpi_breakdown(cls, v):
+        if isinstance(v, dict):
+            # Convert dict to list of MemberMetricSchema if needed
+            return [{"kpi_name": k, "percentage": v} for k, v in v.items()]
+        return v
     
 class LeaderboardEntrySchema(BaseModel):
     score: float
