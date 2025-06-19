@@ -258,7 +258,7 @@ async def process_workroom_end_session(ctx, workroom_id, session_id, user_id, _j
             # Must run in strict order: summary -> leaderboard -> KPI overview
             await generate_user_session_summary(workroom_uuid, session_uuid, user_uuid, session)
             await update_workroom_leaderboard(workroom_uuid, session)
-            await calculate_workroom_kpi_overview(workroom_uuid, session)
+            await calculate_workroom_kpi_overview(workroom_uuid, user_uuid, session)
 
             live_session = await session.get(WorkroomLiveSession, session_uuid)
             if not live_session:

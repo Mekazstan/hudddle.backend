@@ -543,7 +543,7 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
 #   KPI Functions
 #   --------------------------------------------------------------------------------
 
-async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSession):
+async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, session: AsyncSession):
     # Get workroom and today's date
     workroom = await session.get(Workroom, workroom_id)
     if not workroom:
@@ -560,7 +560,20 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSessi
     )
     existing_summary = existing_summary.scalar_one_or_none()
 
-    # Get all user summaries for today
+    # Get current user's summary for today
+    user_summary_result = await session.execute(
+        select(UserKPISummary).where(
+            UserKPISummary.workroom_id == workroom_id,
+            UserKPISummary.user_id == user_id,
+            UserKPISummary.date == today
+        )
+    )
+    user_summary = user_summary_result.scalar_one_or_none()
+
+    if not user_summary:
+        raise HTTPException(status_code=404, detail="No KPI summary found for current user today")
+    
+    # Get all user summaries for today (only for alignment calculation)
     summaries_result = await session.execute(
         select(UserKPISummary).where(
             UserKPISummary.workroom_id == workroom_id,
@@ -588,14 +601,19 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSessi
         for kpi_name, values in combined_kpi_breakdown.items()
     }
 
-    # Generate summary text using LLM
-    all_summary_texts = [s.summary_text for s in summaries if s.summary_text]
+    # Prepare texts for LLM - only current user and existing workroom summary
+    texts_for_llm = [user_summary.summary_text]
+    if existing_summary and existing_summary.summary_text:
+        texts_for_llm.append(existing_summary.summary_text)
+        
     llm_prompt = f"""
-    You are analyzing daily performance summaries for an entire workroom team.
-    Below are individual member summaries from today:
+    You are analyzing daily performance summaries for a workroom team.
+    Below are the relevant summaries from today:
 
-    Member Summaries:
-    {chr(10).join(all_summary_texts)}
+    Current User Summary:
+    {texts_for_llm[0]}
+
+    {"Existing Team Summary:" + texts_for_llm[1] if len(texts_for_llm) > 1 else ""}
 
     Key Metrics:
     - Overall Alignment: {round(average_alignment, 2)}%
@@ -646,22 +664,6 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, session: AsyncSessi
         )
     )
     existing_metrics = existing_metrics.scalars().all()
-
-    # Update or create metric entries
-    for kpi_name, value in averaged_kpi_breakdown.items():
-        existing_metric = next(
-            (m for m in existing_metrics if m.kpi_name == kpi_name),
-            None
-        )
-        if existing_metric:
-            existing_metric.metric_value = round(value, 2)
-        else:
-            session.add(WorkroomKPIMetricHistory(
-                workroom_id=workroom_id,
-                date=today,
-                kpi_name=kpi_name,
-                metric_value=round(value, 2)
-            ))
 
     # Add overall alignment metric
     overall_metric_name = f"{today} - Overall Alignment"
