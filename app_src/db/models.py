@@ -39,6 +39,28 @@ class LevelTier(str, PyEnum):
     INTERMEDIATE = "Intermediate"
     ADVANCED = "Advanced"
     EXPERT = "Expert"
+    
+class ExternalServiceType(str, PyEnum):
+    ASANA = "asana"
+    TRELLO = "trello"
+    JIRA = "jira"
+    NOTION = "notion"
+    SLACK = "slack"
+    ZOOM = "zoom"
+    TOGGL = "toggl"
+    FIGMA = "figma"
+    MIRO = "miro"
+    GOOGLE_DOCS = "google_docs"
+    
+class SubscriptionPlan(str, PyEnum):
+    BASIC = "basic"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
+
+class PaymentStatus(str, PyEnum):
+    PENDING = "pending"
+    SUCCESSFUL = "successful"
+    FAILED = "failed"
 
 class UserLevel(Base):
     __tablename__ = "user_levels"
@@ -133,6 +155,13 @@ class User(Base):
     find_us = Column(String, nullable=True)
     software_used = Column(ARRAY(String), nullable=True)
 
+    external_connections = relationship(
+        "ExternalServiceConnection", 
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    payments = relationship("Payment", back_populates="user", cascade="all, delete-orphan")
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
     workrooms_created = relationship("Workroom", back_populates="created_by_user")
     workrooms = relationship(
         "Workroom",
@@ -188,6 +217,37 @@ class User(Base):
         back_populates="receiver",
         cascade="all, delete-orphan"
     )
+class Payment(Base):
+    __tablename__ = "payments"
+    
+    id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
+    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), nullable=False)
+    amount = Column(Numeric, nullable=False)
+    currency = Column(String, default="NGN", nullable=False)
+    reference = Column(String, unique=True, nullable=False)
+    status = Column(Enum(PaymentStatus), default=PaymentStatus.PENDING, nullable=False)
+    payment_method = Column(String, nullable=True)
+    paystack_transaction_id = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = relationship("User", back_populates="payments")
+    
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
+    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='CASCADE'), nullable=False)
+    plan = Column(Enum(SubscriptionPlan), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    start_date = Column(DateTime(timezone=True), default=datetime.utcnow)
+    end_date = Column(DateTime(timezone=True), nullable=True)
+    paystack_subscription_id = Column(String, nullable=True)
+    paystack_customer_code = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = relationship("User", back_populates="subscriptions")
     
 class WorkroomPerformanceMetric(Base):
     __tablename__ = "workroom_performance_metrics"
@@ -388,4 +448,30 @@ class WorkroomKPIMetricHistory(Base):
     metric_value = Column(Float, nullable=False)
 
     workroom = relationship("Workroom", back_populates="kpi_metric_history")
+
+class ExternalServiceConnection(Base):
+    __tablename__ = "external_service_connections"
     
+    id = Column(pg.UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    service_type = Column(Enum(ExternalServiceType))
+    access_token = Column(String, nullable=False)
+    refresh_token = Column(String, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    connection_metadata = Column(JSON, nullable=True)
+    
+    user = relationship("User", back_populates="external_connections")
+    
+class ImportedTask(Base):
+    __tablename__ = "imported_tasks"
+    
+    id = Column(pg.UUID(as_uuid=True), primary_key=True, default=uuid4)
+    external_id = Column(String, nullable=False)  # Original ID from external service
+    source_service = Column(Enum(ExternalServiceType))
+    task_id = Column(pg.UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"))
+    last_sync = Column(DateTime(timezone=True))
+    raw_data = Column(JSON)  # Original payload
+    
+    task = relationship("Task")
+    
+# [Asana, Trello, Jira, Notion, Google Docs, Slack, Zoom, Toggl Track, RescueTime, Figma, Miro]

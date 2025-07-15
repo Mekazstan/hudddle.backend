@@ -98,46 +98,44 @@ class MemberMetricSchema(BaseModel):
     weight: Optional[float] = None
     metric_value: Optional[float] = None
 
+# Simplified version that works with Pydantic v2
+KPIBreakdownType = Union[List[MemberMetricSchema], Dict[str, float]]
+
 class WorkroomKPISummarySchema(BaseModel):
     overall_alignment_percentage: float
     summary_text: Optional[str] = None
-    kpi_breakdown: Union[List[MemberMetricSchema], Dict[str, float]]  # Accepts both formats
+    kpi_breakdown: KPIBreakdownType
 
     @field_validator('kpi_breakdown', mode='before')
     def validate_kpi_breakdown(cls, v):
         if isinstance(v, dict):
-            # Convert dict to list of MemberMetricSchema if needed
-            return [{"kpi_name": k, "percentage": v} for k, v in v.items()]
+            return [MemberMetricSchema(
+                kpi_name=k, 
+                percentage=v,
+                weight=None,
+                metric_value=None
+            ) for k, v in v.items()]
         return v
-    
-class KPIBreakdownType(BaseModel):
-    @classmethod
-    def __get_pydantic_core_schema__(cls, source_type, handler):
-        # Accept either a list of MemberMetricSchema or a dictionary
-        return {
-            'type': 'union',
-            'choices': [
-                {'type': 'list', 'items': handler(MemberMetricSchema)},
-                {'type': 'dict', 'keys': {'type': 'str'}, 'values': {'type': 'float'}}
-            ]
-        }
-
 
 class UserKPIMetricHistorySchema(BaseModel):
     kpi_name: str
     date: date
     alignment_percentage: float
-    
+
 class UserKPISummarySchema(BaseModel):
     overall_alignment_percentage: float
     summary_text: Optional[str] = None
-    kpi_breakdown: Union[List[MemberMetricSchema], Dict[str, float]]  # Accepts both formats
+    kpi_breakdown: KPIBreakdownType
 
     @field_validator('kpi_breakdown', mode='before')
     def validate_kpi_breakdown(cls, v):
         if isinstance(v, dict):
-            # Convert dict to list of MemberMetricSchema if needed
-            return [{"kpi_name": k, "percentage": v} for k, v in v.items()]
+            return [MemberMetricSchema(
+                kpi_name=k, 
+                percentage=v,
+                weight=None,
+                metric_value=None
+            ) for k, v in v.items()]
         return v
     
 class LeaderboardEntrySchema(BaseModel):
