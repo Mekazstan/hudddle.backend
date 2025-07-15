@@ -307,7 +307,7 @@ async def reset_password(
             detail=str(e)
         )
         
-@auth_router.put("/update-profile-data", response_model=UserSchema)
+@auth_router.patch("/update-profile-data", response_model=UserSchema)
 async def update_user_data(
     update_data: UserUpdateSchema,
     user: User = Depends(get_current_user_model),

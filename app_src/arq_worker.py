@@ -16,30 +16,24 @@ logger = logging.getLogger('arq.worker')
 
 # Define startup and shutdown functions at module level
 async def startup(ctx):
-    logging.warning("🔥 Worker startup function has been triggered")
-    print("="*50)
-    print("STARTUP FUNCTION CALLED")
-    print("="*50)
-    logging.warning("🔥 Worker startup function has been triggered")
-
+    logger.info("🚀 Starting worker initialization...")
     
     try:
-        ctx['mail'] = mail_service
         ctx['session_maker'] = async_session
+        ctx['mail'] = mail_service
         
         # Test connections
         if not await ctx['mail'].test_connection():
             raise ConnectionError("Failed to connect to mail server")
         
         logger.info("✅ Mail server connection verified")
-        logger.info("🚀 Worker startup complete")
+        logger.info("🏁 Worker startup complete")
     except Exception as e:
         logging.error(f"❌ Worker startup failed: {e}")
         raise
 
 async def shutdown(ctx):
     logging.info("🛑 Worker shutting down")
-    # Clean up resources if needed
     pass
 
 class WorkerSettings:
@@ -67,3 +61,9 @@ class WorkerSettings:
     # Reference the module-level functions
     on_startup = startup
     on_shutdown = shutdown
+
+
+
+
+
+logger.info("🚀 Starting worker initialization...")

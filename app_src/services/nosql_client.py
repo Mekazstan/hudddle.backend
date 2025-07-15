@@ -11,6 +11,7 @@ class NoSQLClient:
         
     async def ensure_indexes(self):
         await self.messages.create_index([('workroom_id', 1), ('timestamp', -1)])
+        await self.messages.create_index([('metadata.mentions', 1)])
         await self.messages.create_index([('id', 1)], unique=True)
         await self.messages.create_index([('sender_id', 1)])
         

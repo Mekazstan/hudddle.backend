@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     MONGODB_URL: str
     MONGODB_NAME: str
     REDIS_URL: str
+    LANGCHAIN_API_KEY: str
+    LANGSMITH_TRACING: str = "true"
+    LANGSMITH_PROJECT: str = "hudddle-xyz"
+    LANGSMITH_ENDPOINT: str = "https://api.langsmith.com"
+    PAYSTACK_SECRET_KEY: str
+    PAYSTACK_PUBLIC_KEY: str
+    PAYSTACK_WEBHOOK_SECRET: str
+    PAYSTACK_BASE_URL: str
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parent.parent / ".env",

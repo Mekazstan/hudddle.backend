@@ -13,7 +13,13 @@ google-auth-oauthlib
 google-auth-httplib2
 fastapi-mail
 fastapi[standard]
+fastapi[websockets]
 itsdangerous
+httpx
+langsmith
+langchain
+langchain-groq
+paystack-sdk
 passlib[bcrypt]
 pydantic
 pydantic-settings

@@ -1,6 +1,8 @@
 from sqlalchemy import select
-from fastapi import WebSocket, status, HTTPException
+from fastapi import WebSocket, WebSocketDisconnect, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 from typing import Optional
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
@@ -116,49 +118,111 @@ async def verify_google_token(google_token: str) -> dict:
             detail=f"Google authentication failed: {str(e)}"
         )
 
-async def get_current_user_websocket(
+async def debug_jwt_payload(token: str):
+    """Debug function to inspect JWT payload structure"""
+    try:
+        # Decode without verification for debugging
+        payload = jwt.decode(token, options={"verify_signature": False})
+        print("JWT Payload structure:", payload)
+        return payload
+    except Exception as e:
+        print(f"Debug JWT decode error: {e}")
+        return None
+
+async def get_current_user_websocket_no_accept(
     websocket: WebSocket,
     token: str,
     session: AsyncSession
 ) -> Optional[User]:
-    """Authenticate user via WebSocket connection"""
-    credentials_exception = None
-    
+    """Authenticate user via WebSocket connection without accepting (already accepted)"""
     try:
-        payload = jwt.decode(jwt=token, key=Config.JWT_SECRET_KEY, algorithms=[Config.JWT_ALGORITHM])
-        
-        # Extract user_id from nested structure
-        user_data = payload.get("user", {})
-        user_id: str = user_data.get("user_uid")
-        
-        if user_id is None:
-            credentials_exception = "Invalid token - user ID not found"
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        if not token:
+            print("No token provided")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="No token provided")
+            return None
+
+        try:
+            # Decode the token with more detailed validation
+            payload = jwt.decode(
+                jwt=token,
+                key=Config.JWT_SECRET_KEY,
+                algorithms=[Config.JWT_ALGORITHM],
+                options={
+                    "require": ["exp", "user"],
+                    "verify_exp": True,
+                    "verify_iat": False
+                }
+            )
+            
+            # Extract user data with better error messaging
+            if "user" not in payload:
+                print("Token missing user data")
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token structure")
+                return None
+                
+            # Check both possible user ID fields
+            user_id = payload["user"].get("sub") or payload["user"].get("user_uid")
+            if not user_id:
+                print("Token missing user_uid/sub")
+                print(f"Available user fields: {list(payload['user'].keys())}")
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid user data")
+                return None
+
+            # Verify user exists with explicit error handling
+            try:
+                result = await session.execute(
+                    select(User)
+                    .where(User.id == user_id)
+                    .options(selectinload(User.workrooms))
+                )
+                user = result.scalars().first()
+                
+                if not user:
+                    print(f"User not found: {user_id}")
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User not found")
+                    return None
+                    
+                print(f"User found: {user.id} - {user.email}")
+                return user
+                
+            except SQLAlchemyError as e:
+                print(f"Database error fetching user: {e}")
+                await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Database error")
+                return None
+
+        except ExpiredSignatureError:
+            print("Token expired")
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Token expired - please refresh"
+            )
             return None
             
-        # Verify user exists
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalars().first()
-        if user is None:
-            credentials_exception = "User not found"
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        except DecodeError as e:
+            print(f"Token decode failed: {e}")
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Invalid token format"
+            )
             return None
+            
+        except jwt.PyJWTError as e:
+            print(f"JWT validation error: {e}")
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Token validation failed"
+            )
+            return None
+
+    except WebSocketDisconnect:
+        print("Client disconnected during auth")
+        return None
         
-        return user
-    except ExpiredSignatureError:
-        print("Token expired")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return None
-    except DecodeError:
-        print("Invalid token format")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return None
-    except jwt.PyJWTError as e:
-        print(f"JWTError: {e}")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return None
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        print(f"Unexpected auth error: {e}")
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Authentication error")
+        except:
+            pass
         return None
     
