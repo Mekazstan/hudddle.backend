@@ -42,7 +42,8 @@ GOOGLE_USERINFO_ENDPOINT = Config.GOOGLE_USERINFO_ENDPOINT
 @auth_router.post("/signup", response_model=Message, status_code=status.HTTP_201_CREATED)
 async def create_user_account(
     user_data: UserCreateModel,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     try:
         email = user_data.email.lower()
@@ -57,7 +58,25 @@ async def create_user_account(
         new_user = await user_service.create_user(user_data, session)
         await user_service.create_level_for_user(new_user.id, session)
         await session.commit()
-        return {"detail": "New user account created! Welcome to Hudddle IO. "}
+        # Enqueue welcome email job
+        try:
+            welcome_email_data = {
+                "email": new_user.email,
+                "name": getattr(new_user, 'name', None) or getattr(new_user, 'username', None) or 'New User'
+            }
+            
+            job = await redis.enqueue_job(
+                'send_welcome_email_task',
+                welcome_email_data
+            )
+            
+            logging.info(f"Welcome email job enqueued for {new_user.email}, job ID: {job.job_id}")
+            
+        except Exception as email_error:
+            # Don't fail signup if email fails - just log it
+            logging.error(f"Failed to enqueue welcome email for {new_user.email}: {email_error}")
+        
+        return {"detail": "New user account created! Welcome to Hudddle IO. Check your email for a welcome message."}
         
     except HTTPException as e:
         await session.rollback()

@@ -37,6 +37,60 @@ async def send_email_task(ctx, email_data: dict, _job_try=0):
         await ctx['redis'].enqueue_job('send_email_task', email_data, _defer_by=60, _job_try=_job_try + 1)
         raise
 
+async def send_welcome_email_task(ctx, user_data: dict, _job_try=0):
+    """
+    Send welcome email to new user after signup
+    
+    Args:
+        ctx: ARQ context
+        user_data: dict containing user information
+        _job_try: retry attempt counter
+    """
+    if 'mail' not in ctx:
+        raise RuntimeError("ARQ ctx['mail'] not set — did startup() run?")
+    
+    mail = ctx['mail']
+    user_email = user_data['email']
+    user_name = user_data.get('name', 'New User')
+    
+    logger.info(f"Sending welcome email to {user_email}")
+    
+    try:
+        subject = "Welcome to Hudddle IO! 🎉"
+        email_body = get_welcome_email_template(user_name)
+        
+        message = create_message(
+            recipients=[user_email],
+            subject=subject,
+            body=email_body
+        )
+        
+        await mail.send_message(message)
+        logger.info(f"✅ Welcome email successfully sent to {user_email}")
+        
+        return {
+            "status": "success", 
+            "recipient": user_email,
+            "type": "welcome_email"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to send welcome email to {user_email}: {e}", exc_info=True)
+        
+        if _job_try >= 3:
+            logger.error(f"Welcome email permanently failed after 3 tries for {user_email}")
+            raise
+        
+        # Retry with exponential backoff
+        retry_delay = 60 * (2 ** _job_try)
+        await ctx['redis'].enqueue_job(
+            'send_welcome_email_task', 
+            user_data, 
+            _defer_by=retry_delay, 
+            _job_try=_job_try + 1
+        )
+        raise
+
 async def send_workroom_invites(ctx, workroom_name, creator_name, recipient_emails, _job_try=0):
     if 'mail' not in ctx:
         raise RuntimeError("ARQ ctx['mail'] not set — did startup() run?")
@@ -569,3 +623,188 @@ def get_password_reset_template(otp: str) -> str:
         </html>
     """
 
+def get_welcome_email_template(user_name: str) -> str:
+    """Generate welcome email HTML template"""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to Hudddle IO</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 0;
+                background-color: #f4f4f4;
+                color: #333;
+                line-height: 1.6;
+            }}
+            .email-wrapper {{
+                max-width: 600px;
+                margin: 20px auto;
+                background-color: #ffffff;
+                border-radius: 8px;
+                overflow: hidden;
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            }}
+            .email-header {{
+                background: linear-gradient(135deg, #9b87f5 0%, #7E69AB 100%);
+                text-align: center;
+                padding: 40px 30px;
+            }}
+            .logo {{
+                color: white;
+                font-size: 28px;
+                font-weight: bold;
+                letter-spacing: 1px;
+                margin: 0;
+            }}
+            .welcome-icon {{
+                font-size: 48px;
+                margin-bottom: 10px;
+            }}
+            .container {{
+                padding: 40px;
+                text-align: center;
+                background-color: #ffffff;
+            }}
+            h1 {{
+                color: #1A1F2C;
+                font-size: 26px;
+                margin-bottom: 20px;
+                font-weight: 600;
+            }}
+            .user-name {{
+                color: #9b87f5;
+                font-weight: bold;
+                font-size: 18px;
+            }}
+            p {{
+                color: #555;
+                font-size: 16px;
+                margin: 20px 0;
+                line-height: 1.6;
+            }}
+            .cta-button {{
+                display: inline-block;
+                background: linear-gradient(135deg, #9b87f5 0%, #7E69AB 100%);
+                color: white;
+                padding: 15px 30px;
+                text-decoration: none;
+                border-radius: 25px;
+                font-weight: bold;
+                font-size: 16px;
+                margin: 20px 0;
+                transition: transform 0.2s;
+            }}
+            .cta-button:hover {{
+                transform: translateY(-2px);
+            }}
+            .features {{
+                background-color: #f8f9fa;
+                padding: 30px;
+                margin: 20px 0;
+                border-radius: 8px;
+                text-align: left;
+            }}
+            .feature-item {{
+                margin: 15px 0;
+                padding-left: 25px;
+                position: relative;
+            }}
+            .feature-item:before {{
+                content: "✨";
+                position: absolute;
+                left: 0;
+                top: 0;
+            }}
+            .footer {{
+                padding: 30px;
+                text-align: center;
+                font-size: 14px;
+                color: #666;
+                border-top: 1px solid #eee;
+                background-color: #f9f9f9;
+            }}
+            .footer p {{
+                margin: 8px 0;
+                font-size: 14px;
+                color: #666;
+            }}
+            .footer a {{
+                color: #9b87f5;
+                text-decoration: none;
+            }}
+            .footer a:hover {{
+                text-decoration: underline;
+            }}
+            .social-links {{
+                margin-top: 20px;
+            }}
+            .social-links a {{
+                margin: 0 10px;
+                color: #9b87f5;
+                text-decoration: none;
+                font-weight: 500;
+            }}
+            @media only screen and (max-width: 600px) {{
+                .email-wrapper {{
+                    width: 100%;
+                    margin: 0;
+                    border-radius: 0;
+                }}
+                .container {{
+                    padding: 20px;
+                }}
+                .features {{
+                    padding: 20px;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-wrapper">
+            <div class="email-header">
+                <div class="welcome-icon">🎉</div>
+                <h1 class="logo">Hudddle IO</h1>
+            </div>
+            <div class="container">
+                <h1>Welcome to Hudddle IO!</h1>
+                <p>Hello <span class="user-name">Hudddler 😉</span>,</p>
+                <p>Thank you for joining Hudddle IO! We're excited to have you on board and can't wait for you to experience everything our platform has to offer.</p>
+                
+                <a href="{HUDDDLE_LINK}" class="cta-button">Get Started Now</a>
+                
+                <div class="features">
+                    <h3 style="color: #1A1F2C; margin-bottom: 20px;">What you can do with Hudddle IO:</h3>
+                    <div class="feature-item">Create and manage workrooms for your team</div>
+                    <div class="feature-item">Track performance metrics and analytics</div>
+                    <div class="feature-item">Collaborate in real-time with your colleagues</div>
+                    <div class="feature-item">Access powerful productivity tools</div>
+                    <div class="feature-item">Monitor your team's progress and achievements</div>
+                </div>
+                
+                <p>If you have any questions or need help getting started, don't hesitate to reach out to our support team. We're here to help you succeed!</p>
+                
+                <p style="margin-top: 30px;">
+                    <strong>Ready to dive in?</strong><br>
+                    <a href="{HUDDDLE_LINK}" style="color: #9b87f5; text-decoration: none; font-weight: 500;">Start exploring Hudddle IO →</a>
+                </p>
+            </div>
+            <div class="footer">
+                <p><strong>Welcome to the Hudddle IO community!</strong></p>
+                <p>You're receiving this email because you recently created an account with Hudddle IO.</p>
+                <div class="social-links">
+                    <a href="https://x.com/hudddler">Follow us on Twitter</a>
+                    <a href="mailto:support@hudddle.io">Contact Support</a>
+                </div>
+                <p style="margin-top: 20px; font-size: 12px; color: #999;">
+                    You can unsubscribe from welcome emails anytime in your account settings.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """

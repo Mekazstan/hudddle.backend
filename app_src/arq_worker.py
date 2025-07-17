@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 from app_src.arq_tasks import (
     send_email_task,
     send_workroom_invites,
+    send_welcome_email_task,
     process_image_and_store_task,
     process_workroom_end_session,
     email_daily_performance_to_managers
@@ -40,6 +41,7 @@ class WorkerSettings:
     functions = [
         send_email_task,
         send_workroom_invites,
+        send_welcome_email_task,
         process_image_and_store_task,
         process_workroom_end_session,
         email_daily_performance_to_managers
@@ -61,9 +63,5 @@ class WorkerSettings:
     # Reference the module-level functions
     on_startup = startup
     on_shutdown = shutdown
-
-
-
-
 
 logger.info("🚀 Starting worker initialization...")
