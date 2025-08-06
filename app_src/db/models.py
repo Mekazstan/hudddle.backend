@@ -137,7 +137,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
-    password_hash = Column(String, nullable=False)
+    password_hash = Column(String, nullable=True)
     role = Column(String, default="user", nullable=False)
     xp = Column(Integer, default=0, nullable=False)
     level = Column(Integer, default=1, nullable=False)

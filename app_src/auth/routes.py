@@ -103,6 +103,19 @@ async def login_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password"
             )
+        # Check if user registered with Google OAuth
+        if user.auth_provider == "google":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account was created with Google. Please login using your Google account."
+            )
+        
+        # Verify password (only for non-Google users)
+        if user.password_hash is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account has no password set. Please login using your Google account."
+            )
         password_valid = verify_password(password, user.password_hash)
         if not password_valid:
             raise HTTPException(
@@ -138,28 +151,49 @@ async def sign_in_google(
     try:
         google_user_info = await verify_google_token(google_data.google_token)
         google_email = google_user_info["email"]
+        google_name = google_user_info.get("name", "Google User")
+        firstname = google_user_info("given_name", '')
+        lastname = google_user_info("family_name", '')
+        user_image = google_user_info("picture", '')
         
         existing_user = await user_service.get_user_by_email(google_email, session)
         
         if not existing_user:
             new_user_data = {
                 "email": google_email,
-                "username": google_user_info.get("name", ""),
-                "hashed_password": generate_password_hash("google_auth_no_password"),
+                "username": google_name,
+                "hashed_password": None,
                 "is_verified": True,
-                "auth_provider": "google"
+                "auth_provider": "google",
+                "first_name": firstname,
+                "last_name": lastname,
+                "avatar_url": user_image
             }
             user = await user_service.create_user(new_user_data, session)
         else:
             update_data = {}
-            if not existing_user.username and google_user_info.get("name"):
-                update_data["username"] = google_user_info.get("name")
+            # If user exists but doesn't have Google as auth provider, update it
+            if existing_user.auth_provider != "google":
+                update_data["auth_provider"] = "google"
+                # Clear password hash since they're now using Google
+                update_data["password_hash"] = None
+                
+            # Update username if not set
+            if not existing_user.username and google_name:
+                update_data["username"] = google_name
+                
+            if not existing_user.first_name and firstname:
+                update_data["first_name"] = firstname
+                
+            if not existing_user.last_name and lastname:
+                update_data["last_name"] = lastname
+                
+            if not existing_user.avatar_url and user_image:
+                update_data["avatar_url"] = user_image
             
+            # Ensure user is verified
             if not existing_user.is_verified:
-                update_data.update({
-                    "is_verified": True,
-                    "auth_provider": "google"
-                })
+                update_data["is_verified"] = True
             
             if update_data:
                 user = await user_service.update_user(existing_user, update_data, session)
@@ -168,6 +202,7 @@ async def sign_in_google(
 
         access_token = create_access_token(
             user_data={
+                "sub": str(user.id),
                 "email": user.email,
                 "user_uid": str(user.id)
             }
@@ -178,7 +213,8 @@ async def sign_in_google(
                 "email": user.email,
                 "full_name": user.username,
                 "uid": str(user.id),
-                "is_verified": user.is_verified
+                "is_verified": user.is_verified,
+                "auth_provider": user.auth_provider
             },
         )
     except HTTPException as e:
