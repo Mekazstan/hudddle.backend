@@ -16,22 +16,14 @@ from contextlib import asynccontextmanager
 from app_src.db.db_connect import init_db
 from app_src.manager import WebSocketManager
 from app_src.db.db_connect import get_session
-from app_src.config import Config
-# from langsmith import Client
 
 manager = WebSocketManager()
 
-langsmith_api_key = Config.LANGCHAIN_API_KEY
 
 @asynccontextmanager 
 async def life_span(app:FastAPI):
     print(f"Server is starting...")
     await init_db()
-    # try:
-    #     client = Client(api_key=langsmith_api_key)
-    #     print("LangSmith connected successfully")
-    # except Exception as e:
-    #     print(f"LangSmith connection error: {str(e)}")
     yield
     print(f"Server has been stopped")
 

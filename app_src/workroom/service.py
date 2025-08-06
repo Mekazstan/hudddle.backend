@@ -20,10 +20,6 @@ from app_src.config import Config
 from botocore.exceptions import ClientError
 from typing import List, Optional
 from groq import Groq
-# from langsmith import Client
-from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
 from datetime import datetime, timezone
 from .schema import ImageAnalysisResult, UserDailyKPIReport
 
@@ -32,14 +28,6 @@ GROQ_API_KEY = Config.GROQ_API_KEY
 if not GROQ_API_KEY:
     logging.error("GROQ_API_KEY is not set in the environment variables.")
 groq_client = Groq(api_key=GROQ_API_KEY)
-LANGCHAIN_API_KEY = Config.LANGCHAIN_API_KEY
-if not LANGCHAIN_API_KEY:
-    logging.error("LANGCHAIN_API_KEY is not set in the environment variables.")
-LANGSMITH_TRACING = Config.LANGSMITH_TRACING
-LANGSMITH_PROJECT = Config.LANGSMITH_PROJECT
-LANGSMITH_ENDPOINT = Config.LANGSMITH_ENDPOINT
-
-# client = Client(api_key=LANGCHAIN_API_KEY)
 
 # AWS S3 Configuration
 S3_PRESIGNED_URL_EXPIRY_SECONDS = 3600
@@ -327,7 +315,6 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
     """
     Analyzes the image using Groq API and returns a plain text description.
     Focuses on identifying activities related to specific performance metrics.
-    Enables LangSmith tracing automatically when configured.
     """
     try:
         if not kpi_names:
@@ -335,19 +322,11 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
             
         kpi_list = ", ".join(kpi_names)
         
-        # Initialize ChatGroq with multimodal support
-        llm = ChatGroq(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.4,
-            max_tokens=250,
-            groq_api_key=GROQ_API_KEY
-        )
-
-        # Create a prompt with both text and image content
-        messages = [
-            ("system", "You are analyzing a work session screenshot for performance metrics."),
-            HumanMessage(content=[
-                {"type": "text", "text": (
+        # Create message content with image
+        message_content = [
+            {
+                "type": "text", 
+                "text": (
                     "Analyze this screenshot of a user's work session. Focus on identifying activities that relate "
                     f"to these specific performance metrics: {kpi_list}. "
                     "Describe what applications/tools are visible and how they're being used. "
@@ -356,16 +335,35 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
                     "or entertainment sites, mention how they relate to the KPIs. "
                     "Keep your response concise (50-100 words) and directly relevant to work performance. "
                     "Format as plain text with no special formatting or bullet points."
-                )},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ])
+                )
+            },
+            {
+                "type": "image_url", 
+                "image_url": {"url": image_url}
+            }
         ]
 
-        # Create and invoke the chain
-        chain = ChatPromptTemplate.from_messages(messages) | llm
-        response = await chain.ainvoke({})
+        # Use Groq client directly
+        completion = groq_client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are analyzing a work session screenshot for performance metrics."
+                },
+                {
+                    "role": "user",
+                    "content": message_content
+                }
+            ],
+            temperature=0.4,
+            max_completion_tokens=250,
+            top_p=1,
+            stream=False,
+            stop=None
+        )
 
-        return response.content.strip() if response.content else "No analysis returned."
+        return completion.choices[0].message.content.strip() if completion.choices[0].message.content else "No analysis returned."
 
     except Exception as e:
         logging.error(f"Error analyzing image: {e}")
@@ -476,18 +474,6 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         for pm in workroom.performance_metrics
     ]
     
-    # Initialize ChatGroq with error handling
-    try:
-        llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.3,
-            max_tokens=800,
-            groq_api_key=GROQ_API_KEY
-        )
-    except Exception as e:
-        logging.warning(f"LLM initialization failed: {str(e)}")
-        llm = None
-
     # Create fallback response
     fallback_response = UserDailyKPIReport(
         summary_text="No analysis found",
@@ -497,93 +483,102 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         ]
     )
     
-    # Only proceed with LLM if initialization was successful
-    if llm:
-        # Create the prompt
-        # Escape JSON strings to prevent LangChain template variable conflicts
-        kpi_metrics_json = json.dumps(kpi_metrics, indent=2).replace('{', '{{').replace('}', '}}')
-        all_activities_json = json.dumps(all_activities, indent=2).replace('{', '{{').replace('}', '}}')
+    try:
+        # Create the prompt content
+        kpi_metrics_json = json.dumps(kpi_metrics, indent=2)
+        all_activities_json = json.dumps(all_activities, indent=2)
         
-        messages = [
-            ("system", "You are an AI performance analyst evaluating a team member's work session."),
-            ("human", f"""
-            Team Member: {user.first_name} {user.last_name}
-            Workroom: {workroom.name}
-            Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
+        user_content = f"""
+        Team Member: {user.first_name} {user.last_name}
+        Workroom: {workroom.name}
+        Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
 
-            Below are the performance metrics for this workroom with their importance weights:
-            {kpi_metrics_json}
+        Below are the performance metrics for this workroom with their importance weights:
+        {kpi_metrics_json}
 
-            Here are the detected activities from {user.first_name}'s session:
-            {all_activities_json}
+        Here are the detected activities from {user.first_name}'s session:
+        {all_activities_json}
 
-            Your task:
-            1. Write a concise 3-4 sentence summary of {user.first_name}'s performance, highlighting:
-            - Positive behaviors aligned with KPIs
-            - Areas needing improvement
-            - Overall work quality
-            2. For each KPI, provide an alignment percentage (0-100) based on:
-            - Time spent on relevant activities
-            - Quality of engagement
-            - Weight/importance of the KPI
+        Your task:
+        1. Write a concise 3-4 sentence summary of {user.first_name}'s performance, highlighting:
+        - Positive behaviors aligned with KPIs
+        - Areas needing improvement
+        - Overall work quality
+        2. For each KPI, provide an alignment percentage (0-100) based on:
+        - Time spent on relevant activities
+        - Quality of engagement
+        - Weight/importance of the KPI
 
-            Return a JSON object with this exact structure:
-            {{
-                "summary_text": "Your summary here...",
-                "kpi_breakdown": [
-                    {{
-                        "kpi_name": "KPI Name",
-                        "percentage": 85.0
-                    }},
-                    ...
-                ]
-            }}
+        Return a JSON object with this exact structure:
+        {{
+            "summary_text": "Your summary here...",
+            "kpi_breakdown": [
+                {{
+                    "kpi_name": "KPI Name",
+                    "percentage": 85.0
+                }},
+                ...
+            ]
+        }}
 
-            Important:
-            - Only return valid JSON
-            - Include all KPIs in the breakdown
-            - Percentages should be floats
-            - Be objective but constructive
-            """)
-        ]
-        # LLM Completion Call
-        try:
-            # Create and invoke the chain
-            chain = ChatPromptTemplate.from_messages(messages) | llm
-            response = await chain.ainvoke({})
-            
-            # Parse JSON response manually
-            response_text = response.content.strip()
-            
-            # Try to extract JSON from the response
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                try:
-                    parsed_data = json.loads(json_str)
-                    
-                    # Create UserDailyKPIReport from parsed data
-                    if "summary_text" in parsed_data and "kpi_breakdown" in parsed_data:
-                        kpi_breakdown = [
-                            {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
-                            for item in parsed_data["kpi_breakdown"]
-                        ]
-                        summary_data = UserDailyKPIReport(
-                            summary_text=parsed_data["summary_text"],
-                            kpi_breakdown=kpi_breakdown
-                        )
-                    else:
-                        raise ValueError("Missing required fields in LLM response")
-                except (json.JSONDecodeError, ValueError, KeyError) as parse_error:
-                    logging.warning(f"Failed to parse LLM JSON response: {parse_error}. Raw response: {response_text}")
-                    summary_data = fallback_response
-            else:
-                logging.warning(f"No JSON found in LLM response: {response_text}")
+        Important:
+        - Only return valid JSON
+        - Include all KPIs in the breakdown
+        - Percentages should be floats
+        - Be objective but constructive
+        """
+        
+        # Use Groq client directly
+        completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI performance analyst evaluating a team member's work session."
+                },
+                {
+                    "role": "user",
+                    "content": user_content
+                }
+            ],
+            temperature=0.3,
+            max_completion_tokens=800,
+            top_p=1,
+            stream=False,
+            stop=None
+        )
+        
+        # Parse JSON response
+        response_text = completion.choices[0].message.content.strip()
+        
+        # Try to extract JSON from the response
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            try:
+                parsed_data = json.loads(json_str)
+                
+                # Create UserDailyKPIReport from parsed data
+                if "summary_text" in parsed_data and "kpi_breakdown" in parsed_data:
+                    kpi_breakdown = [
+                        {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
+                        for item in parsed_data["kpi_breakdown"]
+                    ]
+                    summary_data = UserDailyKPIReport(
+                        summary_text=parsed_data["summary_text"],
+                        kpi_breakdown=kpi_breakdown
+                    )
+                else:
+                    raise ValueError("Missing required fields in LLM response")
+            except (json.JSONDecodeError, ValueError, KeyError) as parse_error:
+                logging.warning(f"Failed to parse LLM JSON response: {parse_error}. Raw response: {response_text}")
                 summary_data = fallback_response
-        except Exception as e:
-            logging.warning(f"LLM call failed: {str(e)}")
+        else:
+            logging.warning(f"No JSON found in LLM response: {response_text}")
             summary_data = fallback_response
-    else:
+            
+    except Exception as e:
+        logging.warning(f"LLM call failed: {str(e)}")
         summary_data = fallback_response
             
     # Calculate overall alignment percentage (weighted average)
@@ -724,62 +719,61 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         "Please check individual member reports for details."
     )
 
-    # Initialize LLM with error handling
     try:
-        llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.5,
-            max_tokens=500,
-            groq_api_key=GROQ_API_KEY
-        )
-    except Exception as e:
-        logging.warning(f"LLM initialization failed: {str(e)}")
-        llm = None
-
-    # Only proceed with LLM if initialization was successful
-    if llm:
         # Prepare texts for LLM
         texts_for_llm = [user_summary.summary_text]
         if existing_summary and existing_summary.summary_text:
             texts_for_llm.append(existing_summary.summary_text)
         
-        # Create the prompt
-        # Escape JSON strings to prevent LangChain template variable conflicts
-        kpi_breakdown_json = json.dumps(averaged_kpi_breakdown, indent=2).replace('{', '{{').replace('}', '}}')
+        # Create the prompt content
+        kpi_breakdown_json = json.dumps(averaged_kpi_breakdown, indent=2)
         
-        messages = [
-            ("system", "You are analyzing daily performance summaries for a workroom team."),
-            ("human", f"""
-            Below are the relevant summaries from today:
+        user_content = f"""
+        Below are the relevant summaries from today:
 
-            Current User Summary:
-            {texts_for_llm[0]}
+        Current User Summary:
+        {texts_for_llm[0]}
 
-            {"Existing Team Summary:" + texts_for_llm[1] if len(texts_for_llm) > 1 else ""}
+        {"Existing Team Summary:" + texts_for_llm[1] if len(texts_for_llm) > 1 else ""}
 
-            Key Metrics:
-            - Overall Alignment: {round(average_alignment, 2)}%
-            - KPI Breakdown: {kpi_breakdown_json}
+        Key Metrics:
+        - Overall Alignment: {round(average_alignment, 2)}%
+        - KPI Breakdown: {kpi_breakdown_json}
 
-            Generate a concise 3-4 paragraph executive summary highlighting:
-            1. Overall team performance today
-            2. Key strengths and areas for improvement
-            3. Notable individual contributions (mention names if particularly good/bad)
-            4. Recommendations for tomorrow
+        Generate a concise 3-4 paragraph executive summary highlighting:
+        1. Overall team performance today
+        2. Key strengths and areas for improvement
+        3. Notable individual contributions (mention names if particularly good/bad)
+        4. Recommendations for tomorrow
 
-            Write in professional but approachable tone for managers.
-            Focus on patterns and team-level insights rather than individual details.
-            """)
-        ]
-        try:
-            # Create and invoke the chain
-            chain = ChatPromptTemplate.from_messages(messages) | llm
-            response = await chain.ainvoke({})
-            generated_summary = response.content.strip()
-        except Exception as e:
-            logging.error(f"LLM summary generation failed: {e}")
-            generated_summary = "Automatic summary unavailable. Please check individual member reports."
-    else:
+        Write in professional but approachable tone for managers.
+        Focus on patterns and team-level insights rather than individual details.
+        """
+        
+        # Use Groq client directly
+        completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are analyzing daily performance summaries for a workroom team."
+                },
+                {
+                    "role": "user",
+                    "content": user_content
+                }
+            ],
+            temperature=0.5,
+            max_completion_tokens=500,
+            top_p=1,
+            stream=False,
+            stop=None
+        )
+        
+        generated_summary = completion.choices[0].message.content.strip()
+        
+    except Exception as e:
+        logging.error(f"LLM summary generation failed: {e}")
         generated_summary = fallback_summary
 
     # Update or create WorkroomKPISummary

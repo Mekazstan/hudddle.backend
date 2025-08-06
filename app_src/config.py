@@ -32,10 +32,10 @@ class Settings(BaseSettings):
     MONGODB_URL: str
     MONGODB_NAME: str
     REDIS_URL: str
-    LANGCHAIN_API_KEY: str
-    LANGSMITH_TRACING: str = "true"
-    LANGSMITH_PROJECT: str = "hudddle-xyz"
-    LANGSMITH_ENDPOINT: str = "https://api.langsmith.com"
+    # LANGCHAIN_API_KEY: str
+    # LANGSMITH_TRACING: str = "true"
+    # LANGSMITH_PROJECT: str = "hudddle-xyz"
+    # LANGSMITH_ENDPOINT: str = "https://api.langsmith.com"
     PAYSTACK_SECRET_KEY: str
     PAYSTACK_PUBLIC_KEY: str
     PAYSTACK_WEBHOOK_SECRET: str
