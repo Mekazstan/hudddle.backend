@@ -21,6 +21,7 @@ langchain
 langchain-groq
 paystack-sdk
 passlib[bcrypt]
+psycopg2-binary
 pydantic
 pydantic-settings
 pytest

@@ -499,6 +499,10 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
     # Only proceed with LLM if initialization was successful
     if llm:
         # Create the prompt
+        # Escape JSON strings to prevent LangChain template variable conflicts
+        kpi_metrics_json = json.dumps(kpi_metrics, indent=2).replace('{', '{{').replace('}', '}}')
+        all_activities_json = json.dumps(all_activities, indent=2).replace('{', '{{').replace('}', '}}')
+        
         messages = [
             ("system", "You are an AI performance analyst evaluating a team member's work session."),
             ("human", f"""
@@ -507,10 +511,10 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
             Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
 
             Below are the performance metrics for this workroom with their importance weights:
-            {json.dumps(kpi_metrics, indent=2)}
+            {kpi_metrics_json}
 
             Here are the detected activities from {user.first_name}'s session:
-            {json.dumps(all_activities, indent=2)}
+            {all_activities_json}
 
             Your task:
             1. Write a concise 3-4 sentence summary of {user.first_name}'s performance, highlighting:
@@ -717,6 +721,9 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
             texts_for_llm.append(existing_summary.summary_text)
         
         # Create the prompt
+        # Escape JSON strings to prevent LangChain template variable conflicts
+        kpi_breakdown_json = json.dumps(averaged_kpi_breakdown, indent=2).replace('{', '{{').replace('}', '}}')
+        
         messages = [
             ("system", "You are analyzing daily performance summaries for a workroom team."),
             ("human", f"""
@@ -729,7 +736,7 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
 
             Key Metrics:
             - Overall Alignment: {round(average_alignment, 2)}%
-            - KPI Breakdown: {json.dumps(averaged_kpi_breakdown, indent=2)}
+            - KPI Breakdown: {kpi_breakdown_json}
 
             Generate a concise 3-4 paragraph executive summary highlighting:
             1. Overall team performance today
