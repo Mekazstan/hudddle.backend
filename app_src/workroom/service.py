@@ -385,7 +385,7 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are analyzing a work session screenshot for performance metrics."
+                    "content": "You are analyzing a work session screenshot for performance metrics to detect the activity of the user and tools used."
                 },
                 {
                     "role": "user",
@@ -621,7 +621,7 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an AI performance analyst evaluating a team member's work session."
+                    "content": "You are an AI performance analyst evaluating a team member's work session. Respond like you are accesssing and advising the team member"
                 },
                 {
                     "role": "user",
@@ -843,7 +843,7 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
             messages=[
                 {
                     "role": "system",
-                    "content": "You are analyzing daily performance summaries for a workroom team."
+                    "content": "You are analyzing daily performance summaries for a workroom team. Respond like you are writing a daily report to the Team Lead or Manager who wants to know how well the team performed today and how align they are to the team's KPI metrics"
                 },
                 {
                     "role": "user",
