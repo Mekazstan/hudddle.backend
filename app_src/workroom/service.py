@@ -20,7 +20,7 @@ from app_src.config import Config
 from botocore.exceptions import ClientError
 from typing import List, Optional
 from groq import Groq
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from .schema import ImageAnalysisResult, UserDailyKPIReport
 
 
@@ -464,6 +464,31 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
     if not all_activities:
         raise HTTPException(status_code=404, detail="No analysis results found")
 
+    # Get recently completed tasks (last 6 hours) assigned to this user
+    six_hours_ago = datetime.utcnow() - timedelta(hours=6)
+    recent_tasks_result = await db.execute(
+        select(Task).where(
+            Task.workroom_id == workroom_id,
+            Task.assigned_users.contains(user),
+            Task.status == TaskStatus.COMPLETED,
+            Task.completed_at >= six_hours_ago,
+            Task.completed_at.isnot(None)
+        ).order_by(Task.completed_at.desc())
+    )
+    recent_completed_tasks = recent_tasks_result.scalars().all()
+    
+    # Prepare task information for the prompt
+    recent_tasks_info = []
+    for task in recent_completed_tasks:
+        task_info = {
+            "title": task.title,
+            "kpi_link": task.kpi_link,
+            "task_tools": task.task_tools or [],
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "task_points": task.task_point
+        }
+        recent_tasks_info.append(task_info)
+
     # Prepare KPI metrics with weights
     kpi_metrics = [
         {
@@ -487,6 +512,7 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         # Create the prompt content
         kpi_metrics_json = json.dumps(kpi_metrics, indent=2)
         all_activities_json = json.dumps(all_activities, indent=2)
+        recent_tasks_json = json.dumps(recent_tasks_info, indent=2)
         
         user_content = f"""
         Team Member: {user.first_name} {user.last_name}
@@ -499,19 +525,32 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         Here are the detected activities from {user.first_name}'s session:
         {all_activities_json}
 
-        Your task:
-        1. Write a concise 3-4 sentence summary of {user.first_name}'s performance, highlighting:
-        - Positive behaviors aligned with KPIs
-        - Areas needing improvement
-        - Overall work quality
-        2. For each KPI, provide an alignment percentage (0-100) based on:
-        - Time spent on relevant activities
-        - Quality of engagement
-        - Weight/importance of the KPI
+        Here are the tasks {user.first_name} completed in the last 6 hours within this workroom:
+        {recent_tasks_json}
+
+        Your analysis task:
+        1. Evaluate {user.first_name}'s performance by analyzing:
+        - How well their detected activities align with the specified KPIs
+        - Whether they used the tools specified in their completed tasks (task_tools)
+        - The correlation between their activities and the tasks they completed
+        - Quality of work based on KPI alignment and task completion patterns
+        
+        2. Write a concise 3-4 sentence summary highlighting:
+        - Specific alignment with KPIs based on activities and completed tasks
+        - Evidence of using required task tools (if visible in activities)
+        - Task completion efficiency and quality
+        - Areas for improvement based on KPI weights and task requirements
+        
+        3. For each KPI, provide an alignment percentage (0-100) considering:
+        - Time spent on KPI-related activities
+        - Usage of tools specified in completed tasks
+        - Quality of engagement with task-related work
+        - Weight/importance of each KPI
+        - Evidence from both activities and completed task patterns
 
         Return a JSON object with this exact structure:
         {{
-            "summary_text": "Your summary here...",
+            "summary_text": "Your detailed analysis summary here...",
             "kpi_breakdown": [
                 {{
                     "kpi_name": "KPI Name",
@@ -522,10 +561,13 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         }}
 
         Important:
+        - Base analysis on both screen activities AND completed tasks with their tools
+        - Reward alignment between task tools and detected activities
+        - Consider task completion timing and KPI relevance
         - Only return valid JSON
         - Include all KPIs in the breakdown
         - Percentages should be floats
-        - Be objective but constructive
+        - Be objective but constructive in assessment
         """
         
         # Use Groq client directly

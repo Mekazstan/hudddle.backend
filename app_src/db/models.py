@@ -217,6 +217,7 @@ class User(Base):
         back_populates="receiver",
         cascade="all, delete-orphan"
     )
+
 class Payment(Base):
     __tablename__ = "payments"
     
