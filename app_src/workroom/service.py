@@ -1,6 +1,7 @@
 from collections import defaultdict
 import json
 import logging
+import re
 from deepgram import (
     DeepgramClient,
     PrerecordedOptions
@@ -19,7 +20,7 @@ from app_src.config import Config
 from botocore.exceptions import ClientError
 from typing import List, Optional
 from groq import Groq
-from langsmith import Client
+# from langsmith import Client
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -38,7 +39,7 @@ LANGSMITH_TRACING = Config.LANGSMITH_TRACING
 LANGSMITH_PROJECT = Config.LANGSMITH_PROJECT
 LANGSMITH_ENDPOINT = Config.LANGSMITH_ENDPOINT
 
-client = Client(api_key=LANGCHAIN_API_KEY)
+# client = Client(api_key=LANGCHAIN_API_KEY)
 
 # AWS S3 Configuration
 S3_PRESIGNED_URL_EXPIRY_SECONDS = 3600
@@ -547,16 +548,38 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         ]
         # LLM Completion Call
         try:
-            # Create and invoke the chain with JSON output
-            chain = (
-                ChatPromptTemplate.from_messages(messages) 
-                | llm.with_structured_output(
-                    schema=UserDailyKPIReport,
-                    method="json_mode",
-                    include_raw=False
-                )
-            )
-            summary_data = await chain.ainvoke({})
+            # Create and invoke the chain
+            chain = ChatPromptTemplate.from_messages(messages) | llm
+            response = await chain.ainvoke({})
+            
+            # Parse JSON response manually
+            response_text = response.content.strip()
+            
+            # Try to extract JSON from the response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                try:
+                    parsed_data = json.loads(json_str)
+                    
+                    # Create UserDailyKPIReport from parsed data
+                    if "summary_text" in parsed_data and "kpi_breakdown" in parsed_data:
+                        kpi_breakdown = [
+                            {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
+                            for item in parsed_data["kpi_breakdown"]
+                        ]
+                        summary_data = UserDailyKPIReport(
+                            summary_text=parsed_data["summary_text"],
+                            kpi_breakdown=kpi_breakdown
+                        )
+                    else:
+                        raise ValueError("Missing required fields in LLM response")
+                except (json.JSONDecodeError, ValueError, KeyError) as parse_error:
+                    logging.warning(f"Failed to parse LLM JSON response: {parse_error}. Raw response: {response_text}")
+                    summary_data = fallback_response
+            else:
+                logging.warning(f"No JSON found in LLM response: {response_text}")
+                summary_data = fallback_response
         except Exception as e:
             logging.warning(f"LLM call failed: {str(e)}")
             summary_data = fallback_response
