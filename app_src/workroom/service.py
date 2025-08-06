@@ -311,6 +311,37 @@ async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
 #  Image Analysis Functions
 # --------------------------------------------------------------------------------
 
+def validate_image_url(image_url: str) -> bool:
+    """
+    Validates if the image URL is accessible and in a supported format.
+    """
+    try:
+        import urllib.request
+        from urllib.parse import urlparse
+        
+        # Check if URL is properly formatted
+        parsed = urlparse(image_url)
+        if not parsed.scheme or not parsed.netloc:
+            logging.warning(f"Invalid URL format: {image_url}")
+            return False
+            
+        # Check if URL is accessible (basic check)
+        req = urllib.request.Request(image_url, method='HEAD')
+        with urllib.request.urlopen(req, timeout=10) as response:
+            content_type = response.getheader('content-type', '').lower()
+            
+            # Check if content type indicates an image
+            supported_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+            if not any(img_type in content_type for img_type in supported_types):
+                logging.warning(f"Unsupported image type: {content_type} for URL: {image_url}")
+                return False
+                
+        return True
+        
+    except Exception as e:
+        logging.warning(f"Image URL validation failed: {e}")
+        return False
+
 async def analyze_image(image_url: str, kpi_names: set) -> str:
     """
     Analyzes the image using Groq API and returns a plain text description.
@@ -321,6 +352,11 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
             kpi_names = {"productivity", "focus", "collaboration"}
             
         kpi_list = ", ".join(kpi_names)
+        
+        # Validate image URL before sending to Groq
+        if not validate_image_url(image_url):
+            logging.error(f"Invalid or inaccessible image URL: {image_url}")
+            return "[Image analysis skipped: Invalid or inaccessible image URL]"
         
         # Create message content with image
         message_content = [
@@ -366,8 +402,17 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
         return completion.choices[0].message.content.strip() if completion.choices[0].message.content else "No analysis returned."
 
     except Exception as e:
-        logging.error(f"Error analyzing image: {e}")
-        return f"[Image analysis failed: {str(e)}]"
+        # Enhanced error logging with more context
+        error_msg = str(e)
+        if "invalid image data" in error_msg.lower():
+            logging.error(f"Groq API rejected image data from URL: {image_url}. Error: {e}")
+            return "[Image analysis failed: Invalid image format or corrupted image data]"
+        elif "400" in error_msg:
+            logging.error(f"Bad request to Groq API with image URL: {image_url}. Error: {e}")
+            return "[Image analysis failed: Bad request to vision API]"
+        else:
+            logging.error(f"Unexpected error analyzing image {image_url}: {e}")
+            return f"[Image analysis failed: {str(e)}]"
 
 async def process_image_and_store_task(
     user_id: UUID,
@@ -413,7 +458,7 @@ async def process_image_and_store_task(
         return
 
     # Store the analysis result to S3
-    await store_analysis_result(analysis_result.json(), image_filename)
+    await store_analysis_result(analysis_result, image_filename)
 
 async def store_analysis_result(analysis_text: str, original_image_key: str) -> bool:
     """
@@ -713,13 +758,13 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
     )
     existing_summary = existing_summary.scalar_one_or_none()
 
-    # Get current user's summary for today
+    # Get current user's summary for today (with ordering to handle duplicates)
     user_summary_result = await session.execute(
         select(UserKPISummary).where(
             UserKPISummary.workroom_id == workroom_id,
             UserKPISummary.user_id == user_id,
             UserKPISummary.date == today
-        )
+        ).order_by(UserKPISummary.id.desc()).limit(1)
     )
     user_summary = user_summary_result.scalar_one_or_none()
 
