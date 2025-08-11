@@ -580,11 +580,12 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         - The correlation between their activities and the tasks they completed
         - Quality of work based on KPI alignment and task completion patterns
         
-        2. Write a concise 3-4 sentence summary highlighting:
-        - Specific alignment with KPIs based on activities and completed tasks
-        - Evidence of using required task tools (if visible in activities)
-        - Task completion efficiency and quality
-        - Areas for improvement based on KPI weights and task requirements
+        2. Write a structured summary with the following format for frontend display:
+        - Start with "**Insights**" as a header
+        - Use bullet points (•) for key insights
+        - Include a "**Recommendations**" section with actionable suggestions
+        - Keep insights concise and specific to observed activities and KPI alignment
+        - Format for easy reading with proper spacing and structure
         
         3. For each KPI, provide an alignment percentage (0-100) considering:
         - Time spent on KPI-related activities
@@ -595,7 +596,7 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
 
         Return a JSON object with this exact structure:
         {{
-            "summary_text": "Your detailed analysis summary here...",
+            "summary_text": "**Insights**\n\n• [Specific insight about KPI alignment and activity patterns]\n• [Evidence of tool usage and task completion effectiveness]\n• [Quality assessment based on observed behaviors]\n• [Performance consistency or notable patterns]\n\n**Recommendations**\n\n• [Specific actionable recommendation based on analysis]\n• [Suggestion for improving KPI alignment or workflow]\n• [Tool usage or collaboration improvements if applicable]",
             "kpi_breakdown": [
                 {{
                     "kpi_name": "KPI Name",
@@ -606,13 +607,16 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         }}
 
         Important:
+        - Format summary_text for direct frontend rendering with proper markdown
+        - Use bullet points (•) not dashes (-)
+        - Include clear section headers with **bold** formatting
+        - Keep insights data-driven and specific to observed activities
         - Base analysis on both screen activities AND completed tasks with their tools
         - Reward alignment between task tools and detected activities
         - Consider task completion timing and KPI relevance
-        - Only return valid JSON
+        - Only return valid JSON with properly escaped formatting
         - Include all KPIs in the breakdown
         - Percentages should be floats
-        - Be objective but constructive in assessment
         """
         
         # Use Groq client directly
@@ -827,14 +831,40 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         - Overall Alignment: {round(average_alignment, 2)}%
         - KPI Breakdown: {kpi_breakdown_json}
 
-        Generate a concise 3-4 paragraph executive summary highlighting:
-        1. Overall team performance today
-        2. Key strengths and areas for improvement
-        3. Notable individual contributions (mention names if particularly good/bad)
-        4. Recommendations for tomorrow
+        Generate a structured executive summary formatted for frontend display with the following structure:
 
-        Write in professional but approachable tone for managers.
-        Focus on patterns and team-level insights rather than individual details.
+        **Team Performance Summary**
+
+        • [Overall team performance insight with specific alignment percentage]
+        • [Key productivity patterns observed across team members]
+        • [Collaboration effectiveness and tool usage patterns]
+
+        **Key Strengths**
+
+        • [Specific strength with supporting data]
+        • [Notable individual contributions - mention names for exceptional performance]
+        • [Effective processes or high-performing areas]
+
+        **Areas for Improvement**
+
+        • [Specific improvement area with context]
+        • [Performance gaps or misalignment issues]
+        • [Resource or support needs identified]
+
+        **Recommendations for Tomorrow**
+
+        • [Actionable recommendation for team productivity]
+        • [Specific suggestions for underperforming areas]
+        • [Strategic focus areas based on today's insights]
+
+        Format requirements:
+        - Use bullet points (•) for all list items
+        - Include **bold** section headers
+        - Write in professional but approachable tone for managers
+        - Focus on team-level insights with specific data points
+        - Mention individual names only for particularly notable performance (good or concerning)
+        - Keep each bullet point concise but informative
+        - Ensure proper markdown formatting for frontend rendering
         """
         
         # Use Groq client directly
