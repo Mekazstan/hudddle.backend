@@ -10,7 +10,7 @@ import logging
 from app_src.arq_tasks import get_password_reset_template
 from app_src.db.models import User, PasswordResetOTP
 from app_src.db.db_connect import get_session
-from app_src.redis_config import get_redis_pool
+# from app_src.redis_config import get_redis_pool
 from .schema import (
     ForgotPassword, Message, PasswordResetOTPRequest,
     UserCreateModel, UserLoginModel, AuthToken,
@@ -24,7 +24,7 @@ from .dependencies import (AccessTokenBearer, get_current_user,
 from app_src.config import Config
 import random
 from datetime import datetime, timedelta
-from arq.connections import ArqRedis
+# from arq.connections import ArqRedis
 
 # Router and service setup
 auth_router = APIRouter()
@@ -43,7 +43,7 @@ GOOGLE_USERINFO_ENDPOINT = Config.GOOGLE_USERINFO_ENDPOINT
 async def create_user_account(
     user_data: UserCreateModel,
     session: AsyncSession = Depends(get_session),
-    redis: ArqRedis = Depends(get_redis_pool)
+    # redis: ArqRedis = Depends(get_redis_pool)
 ):
     try:
         email = user_data.email.lower()
@@ -59,22 +59,22 @@ async def create_user_account(
         await user_service.create_level_for_user(new_user.id, session)
         await session.commit()
         # Enqueue welcome email job
-        try:
-            welcome_email_data = {
-                "email": new_user.email,
-                "name": getattr(new_user, 'name', None) or getattr(new_user, 'username', None) or 'New User'
-            }
+        # try:
+        #     welcome_email_data = {
+        #         "email": new_user.email,
+        #         "name": getattr(new_user, 'name', None) or getattr(new_user, 'username', None) or 'New User'
+        #     }
             
-            job = await redis.enqueue_job(
-                'send_welcome_email_task',
-                welcome_email_data
-            )
+        #     job = await redis.enqueue_job(
+        #         'send_welcome_email_task',
+        #         welcome_email_data
+        #     )
             
-            logging.info(f"Welcome email job enqueued for {new_user.email}, job ID: {job.job_id}")
+        #     logging.info(f"Welcome email job enqueued for {new_user.email}, job ID: {job.job_id}")
             
-        except Exception as email_error:
-            # Don't fail signup if email fails - just log it
-            logging.error(f"Failed to enqueue welcome email for {new_user.email}: {email_error}")
+        # except Exception as email_error:
+        #     # Don't fail signup if email fails - just log it
+        #     logging.error(f"Failed to enqueue welcome email for {new_user.email}: {email_error}")
         
         return {"detail": "New user account created! Welcome to Hudddle IO. Check your email for a welcome message."}
         
@@ -242,7 +242,7 @@ async def get_me(
 async def password_reset_request(
     email_data: ForgotPassword,
     session: AsyncSession = Depends(get_session),
-    redis: ArqRedis = Depends(get_redis_pool)
+    # redis: ArqRedis = Depends(get_redis_pool)
 ):
     try:
         user = await user_service.get_user_by_email(email_data.email, session)
@@ -270,17 +270,17 @@ async def password_reset_request(
                 )
             )
         
-        # Create ARQ Redis pool
-        job = await redis.enqueue_job(
-            'send_email_task',
-            {
-                "recipients": [email_data.email],
-                "subject": "Your Password Reset OTP",
-                "body": get_password_reset_template(otp)
-            }
-        )
+        # # Create ARQ Redis pool
+        # job = await redis.enqueue_job(
+        #     'send_email_task',
+        #     {
+        #         "recipients": [email_data.email],
+        #         "subject": "Your Password Reset OTP",
+        #         "body": get_password_reset_template(otp)
+        #     }
+        # )
 
-        logging.info(f"Password reset OTP generated for {email_data.email}, job ID: {job.job_id}")
+        # logging.info(f"Password reset OTP generated for {email_data.email}, job ID: {job.job_id}")
 
         return {"message": "OTP sent to your email (processing in background)"}
     except SQLAlchemyError as e:
