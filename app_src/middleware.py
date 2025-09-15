@@ -33,7 +33,11 @@ def register_middleware(app: FastAPI):
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "https://app.hudddle.xyz",
+            "http://localhost:3000",  # for local development
+            "http://127.0.0.1:3000",  # for local development
+        ],
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,
