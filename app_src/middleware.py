@@ -46,9 +46,5 @@ def register_middleware(app: FastAPI):
     # TrustedHost middleware
     app.add_middleware(
         TrustedHostMiddleware,
-        allow_origins=[
-            "https://app.hudddle.xyz",
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allowed_hosts=["*"],
     )
