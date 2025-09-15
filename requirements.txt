@@ -34,3 +34,4 @@ sqlalchemy
 uvicorn
 pytest-asyncio
 motor
+cloudinary
