@@ -21,10 +21,9 @@ class Settings(BaseSettings):
     GOOGLE_AUTH_ENDPOINT: str
     GOOGLE_TOKEN_ENDPOINT: str
     GOOGLE_USERINFO_ENDPOINT: str
-    AWS_ACCESS_KEY_ID : str
-    AWS_SECRET_ACCESS_KEY : str
-    AWS_STORAGE_BUCKET_NAME : str
-    AWS_REGION : str
+    CLOUDINARY_CLOUD_NAME : str
+    CLOUDINARY_API_KEY : str
+    CLOUDINARY_API_SECRET : str
     GROQ_API_KEY: str
     DG_API_KEY: str
     DOMAIN: str

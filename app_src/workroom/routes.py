@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
-# from app_src.redis_config import get_redis_pool
-from .service import upload_audio_to_s3
+from app_src.redis_config import get_redis_pool
 from .schema import (FullMemberSchema, LeaderboardEntrySchema, MemberMetricSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomCreate, WorkroomDetailsSchema, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
@@ -19,26 +18,12 @@ from app_src.db.models import (Leaderboard, LevelCategory, UserKPIMetricHistory,
 from app_src.auth.dependencies import get_current_user
 from app_src.tasks.schema import TaskSchema
 from datetime import datetime, timezone, date
-import boto3
-from botocore.exceptions import ClientError
 from app_src.config import Config
-# from arq.connections import ArqRedis
+import cloudinary
+from arq.connections import ArqRedis
 
 
 workroom_router = APIRouter()
-
-# AWS S3 Configuration
-AWS_ACCESS_KEY_ID = Config.AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY = Config.AWS_SECRET_ACCESS_KEY
-AWS_STORAGE_BUCKET_NAME = Config.AWS_STORAGE_BUCKET_NAME
-AWS_REGION = Config.AWS_REGION
-
-s3_client = boto3.client(
-    "s3",
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION,
-)
 
 async def _fetch_workroom_display_data(session: AsyncSession, user_id: UUID):
     """Helper function to fetch and format workroom display data with member avatars."""
@@ -217,7 +202,7 @@ async def create_workroom(
     workroom_data: WorkroomCreate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    # redis: ArqRedis = Depends(get_redis_pool),
+    redis: ArqRedis = Depends(get_redis_pool),
 ):
     try:
         # Create the Workroom
@@ -321,13 +306,13 @@ async def create_workroom(
         # await initialize_kpi_data_for_workroom(session, new_workroom, all_members, created_metrics)
 
         # 9. Send invites to non-members
-        # if emails_to_invite:
-        #     await redis.enqueue_job(
-        #         'send_workroom_invites',
-        #         new_workroom.name,
-        #         current_user.first_name or "Someone",
-        #         emails_to_invite
-        #     )
+        if emails_to_invite:
+            await redis.enqueue_job(
+                'send_workroom_invites',
+                new_workroom.name,
+                current_user.first_name or "Someone",
+                emails_to_invite
+            )
 
         await session.commit()
         return loaded_workroom
@@ -766,7 +751,7 @@ async def add_members_to_workroom(
     emails: List[str] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    # redis: ArqRedis = Depends(get_redis_pool)
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     today = date.today()
     statement = select(Workroom).options(selectinload(Workroom.members)).where(Workroom.id == workroom_id)
@@ -842,12 +827,12 @@ async def add_members_to_workroom(
     # Send invites to non-member emails if any
     if non_member_emails:
         pass
-        # await redis.enqueue_job(
-        #     'send_workroom_invites',
-        #     workroom.name,
-        #     current_user.first_name or "Someone",
-        #     non_member_emails
-        # )
+        await redis.enqueue_job(
+            'send_workroom_invites',
+            workroom.name,
+            current_user.first_name or "Someone",
+            non_member_emails
+        )
     
     # Refresh and return updated workroom
     await session.refresh(workroom)
@@ -1086,7 +1071,7 @@ async def end_live_session(
     session_id: UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    # redis: ArqRedis = Depends(get_redis_pool)
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     """Trigger the background task to end a live session in the workroom."""
     try:
@@ -1114,18 +1099,18 @@ async def end_live_session(
         live_session.is_ending = True
         await session.commit()
 
-        # # 3. Enqueue task with proper monitoring
-        # job = await redis.enqueue_job(
-        #     'process_workroom_end_session',
-        #     str(workroom_id),
-        #     str(session_id),
-        #     str(current_user.id)
-        # )
+        # 3. Enqueue task with proper monitoring
+        job = await redis.enqueue_job(
+            'process_workroom_end_session',
+            str(workroom_id),
+            str(session_id),
+            str(current_user.id)
+        )
 
-        # logging.info(
-        #     f"Started session closeout job {job.job_id} for "
-        #     f"workroom:{workroom_id} session:{session_id}"
-        # )
+        logging.info(
+            f"Started session closeout job {job.job_id} for "
+            f"workroom:{workroom_id} session:{session_id}"
+        )
 
         return {
             "message": "Session end processing started",
@@ -1152,10 +1137,10 @@ async def analyze_screenshot(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    # redis: ArqRedis = Depends(get_redis_pool)
+    redis: ArqRedis = Depends(get_redis_pool)
 ):
     """
-    Receives a screenshot, uploads it to S3, and triggers the image analysis and data storage.
+    Receives a screenshot, uploads it to Cloudinary, and triggers the image analysis and data storage.
     """
     try:
         # Validate session exists and is active
@@ -1177,28 +1162,35 @@ async def analyze_screenshot(
         file_extension = file.filename.split('.')[-1].lower()
         
         # Generate secure filename
-        image_filename = (
-            f"user_{current_user.id}/session_{session_id}/"
-            f"screenshot_{timestamp.strftime('%Y%m%d_%H%M%S')}.{file_extension}"
+        cloudinary_public_id = (
+            f"hudddleBackend/user_{current_user.id}/session_{session_id}/"
+            f"screenshot_{timestamp.strftime('%Y%m%d_%H%M%S')}"
         )
 
         try:
+            # Read file content for Cloudinary upload
             file.file.seek(0)
-            s3_client.upload_fileobj(
-                Fileobj=file.file,
-                Bucket=AWS_STORAGE_BUCKET_NAME,
-                Key=image_filename,
-                ExtraArgs={
-                    'ContentType': file.content_type,
-                    'ACL': 'public-read',
-                    'Metadata': {
-                        'user_id': str(current_user.id),
-                        'session_id': str(session_id)
-                    }
-                }
+            file_content = await file.read()
+            
+            # Upload to Cloudinary
+            upload_result = cloudinary.uploader.upload(
+                file_content,
+                public_id=cloudinary_public_id,
+                resource_type="image",
+                format=file_extension,
+                context={
+                    'user_id': str(current_user.id),
+                    'session_id': str(session_id),
+                    'timestamp': timestamp.isoformat()
+                },
+                tags=["screenshot", f"user_{current_user.id}", f"session_{session_id}"]
             )
-        except ClientError as e:
-            logging.error(f"S3 upload failed: {str(e)}", exc_info=True)
+            
+            image_url = upload_result['secure_url']
+            image_filename = f"screenshot_{timestamp.strftime('%Y%m%d_%H%M%S')}.{file_extension}"
+            
+        except Exception as e:
+            logging.error(f"Cloudinary upload failed: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to store image"
@@ -1206,21 +1198,20 @@ async def analyze_screenshot(
         finally:
             await file.close()
 
-        image_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{image_filename}"
-
-        # # Enqueue the image processing task
-        # job = await redis.enqueue_job(
-        #     'process_image_and_store_task',
-        #     str(current_user.id),
-        #     str(session_id),
-        #     image_url,
-        #     image_filename,
-        #     timestamp.isoformat()
-        # )
+        # Enqueue the image processing task
+        job = await redis.enqueue_job(
+            'process_image_and_store_task',
+            str(current_user.id),
+            str(session_id),
+            image_url,
+            image_filename,
+            timestamp.isoformat()
+        )
 
         return {
             "message": "Screenshot received for processing", 
             "image_url": image_url,
+            "public_id": upload_result['public_id'],
             # "job_id": job.job_id
         }
     except HTTPException:

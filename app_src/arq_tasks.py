@@ -7,7 +7,7 @@ from app_src.mail import create_message
 from app_src.config import Config
 from app_src.db.models import User, Workroom, WorkroomLiveSession, WorkroomPerformanceMetric
 from app_src.workroom.service import (analyze_image, calculate_workroom_kpi_overview, 
-    generate_user_session_summary, store_analysis_result, delete_s3_object, update_workroom_leaderboard
+    generate_user_session_summary, store_analysis_result, delete_cloudinary_object, update_workroom_leaderboard
 )
 
 DOMAIN = Config.DOMAIN
@@ -284,7 +284,7 @@ async def process_image_and_store_task(ctx, user_id, session_id, image_url, imag
             await store_analysis_result(analysis_result, image_filename)
             await session.commit()
 
-            await delete_s3_object(image_filename)
+            await delete_cloudinary_object(image_filename)
             return analysis_result
         except Exception as e:
             if session.in_transaction():

@@ -14,11 +14,11 @@ from uuid import UUID
 from app_src.db.models import (TaskStatus, UserKPIMetricHistory, UserKPISummary, Workroom, Leaderboard, 
                        Task, WorkroomKPIMetricHistory, WorkroomKPISummary, 
                        WorkroomLiveSession, WorkroomOverallKPI, User)
-import boto3
-from botocore.config import Config as BotoConfig
+import cloudinary
+import cloudinary.api
+import time
 from app_src.config import Config
-from botocore.exceptions import ClientError
-from typing import List, Optional
+from typing import List
 from groq import Groq
 from datetime import datetime, timezone, timedelta
 from .schema import ImageAnalysisResult, UserDailyKPIReport
@@ -29,68 +29,70 @@ if not GROQ_API_KEY:
     logging.error("GROQ_API_KEY is not set in the environment variables.")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# AWS S3 Configuration
-S3_PRESIGNED_URL_EXPIRY_SECONDS = 3600
-AWS_ACCESS_KEY_ID = Config.AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY = Config.AWS_SECRET_ACCESS_KEY
-AWS_STORAGE_BUCKET_NAME = Config.AWS_STORAGE_BUCKET_NAME
-AWS_REGION = Config.AWS_REGION
-
-s3_client_signed = boto3.client(
-    's3',
-    region_name=AWS_REGION,
-    config=BotoConfig(signature_version='s3v4')
+# Cloudinary Configuration
+cloudinary.config(
+    cloud_name=Config.CLOUDINARY_CLOUD_NAME,
+    api_key=Config.CLOUDINARY_API_KEY,
+    api_secret=Config.CLOUDINARY_API_SECRET
 )
 
-s3_client = boto3.client(
-    "s3",
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION,
-)
-
-def generate_presigned_url(bucket_name, object_key, expiry_seconds=S3_PRESIGNED_URL_EXPIRY_SECONDS):
-    """Generate a presigned URL to access an S3 object."""
+def generate_presigned_url(public_id: str, expiry_seconds: int = 3600) -> str:
+    """Generate a presigned URL to access a Cloudinary resource."""
     try:
-        response = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket_name, 'Key': object_key},
-            ExpiresIn=expiry_seconds
-        )
+        # For Cloudinary, secure URLs are always accessible, but we can generate signed URLs for security
+        url = cloudinary.utils.cloudinary_url(
+            public_id,
+            secure=True,
+            sign_url=True,
+            expires_at=int(time.time()) + expiry_seconds
+        )[0]
+        return url
     except Exception as e:
         logging.error(f"Error generating presigned URL: {e}")
         return None
-    return response
 
 async def get_all_analysis_results(user_id: UUID, session_id: UUID) -> List[str]:
     """
-    Retrieves all plain text analysis result files stored in S3 for a given user session.
+    Retrieves all plain text analysis result files stored in Cloudinary for a given user session.
 
     Returns:
         A list of strings, each representing the text content of one analysis result file.
     """
-    prefix = f"user_{user_id}/session_{session_id}/"
+    folder_path = f"hudddleBackend/user_{user_id}/session_{session_id}"
     analysis_data = []
 
     try:
-        paginator = s3_client.get_paginator('list_objects_v2')
-        for page in paginator.paginate(Bucket=AWS_STORAGE_BUCKET_NAME, Prefix=prefix):
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                if key.startswith(prefix + "analysis_") and key.endswith(".txt"):
-                    try:
-                        response = s3_client.get_object(Bucket=AWS_STORAGE_BUCKET_NAME, Key=key)
-                        content = response['Body'].read().decode('utf-8').strip()
-                        if content:
-                            analysis_data.append(content)
-                        else:
-                            logging.warning(f"File {key} is empty. Skipping.")
-                    except Exception as read_error:
-                        logging.error(f"Failed to read file {key}: {read_error}")
+        # Search for analysis text files in user's session folder
+        result = cloudinary.Search()\
+            .expression(f"folder:{folder_path} AND filename:analysis_* AND resource_type:raw")\
+            .execute()
+
+        for resource in result.get('resources', []):
+            public_id = resource['public_id']
+            try:
+                # Get the raw content from Cloudinary
+                # Note: For raw files, we need to fetch the content differently
+                secure_url = resource['secure_url']
+                
+                # Download the content
+                import requests
+                response = requests.get(secure_url)
+                if response.status_code == 200:
+                    content = response.text.strip()
+                    if content:
+                        analysis_data.append(content)
+                    else:
+                        logging.warning(f"File {public_id} is empty. Skipping.")
+                else:
+                    logging.error(f"Failed to download file {public_id}: HTTP {response.status_code}")
+                    
+            except Exception as read_error:
+                logging.error(f"Failed to read file {public_id}: {read_error}")
+                
         return analysis_data
 
-    except ClientError as e:
-        logging.error(f"Error listing analysis results from S3: {e}")
+    except Exception as e:
+        logging.error(f"Error listing analysis results from Cloudinary: {e}")
         return []
 
 async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
@@ -457,28 +459,31 @@ async def process_image_and_store_task(
         logging.warning(f"Analysis result is None, skipping storage")
         return
 
-    # Store the analysis result to S3
-    await store_analysis_result(analysis_result, image_filename)
+    # Store the analysis result to Cloudinary
+    await store_analysis_result(analysis_result, image_filename, user_id, session_id)
 
-async def store_analysis_result(analysis_text: str, original_image_key: str) -> bool:
+async def store_analysis_result(analysis_text: str, original_image_filename: str, user_id: UUID, session_id: UUID) -> bool:
     """
-    Stores the plain text analysis result in AWS S3.
+    Stores the plain text analysis result in Cloudinary as a raw file.
     """
-    base_name = original_image_key.split('/')[-1]
-    file_name_without_ext = base_name.rsplit('.', 1)[0]
-    path_parts = original_image_key.split('/')[:-1]
-    text_key = '/'.join(path_parts) + f'/analysis_{file_name_without_ext}.txt'
-
     try:
-        s3_client.put_object(
-            Bucket=AWS_STORAGE_BUCKET_NAME,
-            Key=text_key,
-            Body=analysis_text.encode("utf-8"),
-            ContentType="text/plain"
+        # Create the file path structure similar to your original S3 structure
+        file_name_without_ext = original_image_filename.rsplit('.', 1)[0]
+        cloudinary_public_id = f"hudddleBackend/user_{user_id}/session_{session_id}/analysis_{file_name_without_ext}"
+
+        # Upload the analysis text as a raw file to Cloudinary
+        result = cloudinary.uploader.upload(
+            analysis_text,
+            public_id=cloudinary_public_id,
+            resource_type="raw",
+            format="txt"
         )
+        
+        logging.info(f"Analysis result stored in Cloudinary: {result['public_id']}")
         return True
-    except ClientError as e:
-        logging.error(f"Error storing analysis result: {e}")
+        
+    except Exception as e:
+        logging.error(f"Error storing analysis result in Cloudinary: {e}")
         return False
 
 async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, user_id: UUID, db: AsyncSession):
@@ -987,58 +992,145 @@ async def process_audio(audio_url: str) -> str:
         logging.error(f"Error processing audio with Deepgram from URL: {e}")
         raise e
 
-async def store_audio_analysis_report(report_text: str, s3_key: str) -> bool:
+# async def store_audio_analysis_report(report_text: str, s3_key: str) -> bool:
+#     """
+#     Stores the audio analysis report in AWS S3.
+#     """
+#     try:
+#         s3_client.put_object(
+#             Bucket=AWS_STORAGE_BUCKET_NAME,
+#             Key=s3_key,
+#             Body=report_text.encode("utf-8"),
+#             ContentType="application/json"
+#         )
+#         logging.info(f"Stored audio analysis report: {s3_key} in S3")
+#         return True
+#     except ClientError as e:
+#         logging.error(f"Error storing audio analysis report: {e}")
+#         return False
+
+async def delete_cloudinary_object(public_id: str) -> bool:
     """
-    Stores the audio analysis report in AWS S3.
+    Deletes an object from Cloudinary.
     """
     try:
-        s3_client.put_object(
-            Bucket=AWS_STORAGE_BUCKET_NAME,
-            Key=s3_key,
-            Body=report_text.encode("utf-8"),
-            ContentType="application/json"
+        result = cloudinary.uploader.destroy(
+            public_id,
+            resource_type="image"
         )
-        logging.info(f"Stored audio analysis report: {s3_key} in S3")
-        return True
-    except ClientError as e:
-        logging.error(f"Error storing audio analysis report: {e}")
+        
+        if result.get('result') == 'ok':
+            logging.info(f"Deleted object: {public_id} from Cloudinary")
+            return True
+        else:
+            logging.warning(f"Cloudinary deletion returned: {result}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error deleting object from Cloudinary: {e}")
+        return False
+    
+async def delete_cloudinary_objects(public_ids: list[str]) -> bool:
+    """
+    Deletes multiple objects from Cloudinary.
+    """
+    try:
+        if not public_ids:
+            return True
+            
+        # Cloudinary can delete multiple resources at once
+        result = cloudinary.api.delete_resources(
+            public_ids,
+            resource_type="image"
+        )
+        
+        # Check if all deletions were successful
+        deleted = result.get('deleted', {})
+        failed = result.get('not_found', []) + result.get('partial', [])
+        
+        if failed:
+            logging.warning(f"Some Cloudinary objects failed to delete: {failed}")
+        
+        logging.info(f"Deleted {len(deleted)} objects from Cloudinary")
+        return len(failed) == 0
+        
+    except Exception as e:
+        logging.error(f"Error deleting objects from Cloudinary: {e}")
         return False
 
-async def delete_s3_object(s3_key: str) -> bool:
+async def delete_user_session_files(user_id: UUID, session_id: UUID) -> bool:
     """
-    Deletes an object from AWS S3.
+    Deletes all files (screenshots and analysis results) for a user session from Cloudinary.
     """
     try:
-        s3_client.delete_object(
-            Bucket=AWS_STORAGE_BUCKET_NAME,
-            Key=s3_key,
-        )
-        logging.info(f"Deleted object: {s3_key} from S3")
-        return True
-    except ClientError as e:
-        logging.error(f"Error deleting object from S3: {e}")
+        folder_path = f"hudddleBackend/user_{user_id}/session_{session_id}"
+        
+        # Search for all resources in the session folder
+        result = cloudinary.Search()\
+            .expression(f"folder:{folder_path}")\
+            .max_results(500)\
+            .execute()
+        
+        if not result.get('resources'):
+            logging.info(f"No files found for user {user_id}, session {session_id}")
+            return True
+        
+        # Extract public_ids
+        public_ids = [resource['public_id'] for resource in result['resources']]
+        
+        # Delete all resources
+        return await delete_cloudinary_objects(public_ids)
+        
+    except Exception as e:
+        logging.error(f"Error deleting user session files: {e}")
         return False
 
-async def upload_audio_to_s3(file: UploadFile, user_id: UUID, session_id: UUID, timestamp: str) -> Optional[str]:
+async def get_user_session_screenshots(user_id: UUID, session_id: UUID) -> tuple[list[str], list[str]]:
     """
-    Uploads an audio file to AWS S3 and returns the URL and key.
+    Get all screenshot URLs and public_ids for a user session from Cloudinary.
+    Returns tuple of (image_urls, public_ids)
     """
-    s3_key = f"user_{user_id}/session_{session_id}/audio_{timestamp}.{file.filename.split('.')[-1]}"
     try:
-        s3_client.upload_fileobj(
-            Fileobj=file.file,
-            Bucket=AWS_STORAGE_BUCKET_NAME,
-            Key=s3_key,
-            ExtraArgs={
-                'ACL': 'public-read',
-                'ContentType': file.content_type
-            }
-        )
-        audio_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
-        return audio_url, s3_key
-    except ClientError as e:
-        logging.error(f"Error uploading audio to S3: {e}")
-        return None, None
+        folder_path = f"hudddleBackend/user_{user_id}/session_{session_id}"
+        
+        # Search for screenshot images only (not analysis files)
+        result = cloudinary.Search()\
+            .expression(f"folder:{folder_path} AND filename:screenshot_* AND resource_type:image")\
+            .execute()
+        
+        image_urls = []
+        public_ids = []
+        
+        for resource in result.get('resources', []):
+            image_urls.append(resource['secure_url'])
+            public_ids.append(resource['public_id'])
+        
+        return image_urls, public_ids
+        
+    except Exception as e:
+        logging.error(f"Error listing user session screenshots: {e}")
+        return [], []
+
+# async def upload_audio_to_s3(file: UploadFile, user_id: UUID, session_id: UUID, timestamp: str) -> Optional[str]:
+#     """
+#     Uploads an audio file to AWS S3 and returns the URL and key.
+#     """
+#     s3_key = f"user_{user_id}/session_{session_id}/audio_{timestamp}.{file.filename.split('.')[-1]}"
+#     try:
+#         s3_client.upload_fileobj(
+#             Fileobj=file.file,
+#             Bucket=AWS_STORAGE_BUCKET_NAME,
+#             Key=s3_key,
+#             ExtraArgs={
+#                 'ACL': 'public-read',
+#                 'ContentType': file.content_type
+#             }
+#         )
+#         audio_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
+#         return audio_url, s3_key
+#     except ClientError as e:
+#         logging.error(f"Error uploading audio to S3: {e}")
+#         return None, None
 
 async def analyze_text_from_audio(transcript: str, workroom_kpis: List[dict]) -> ImageAnalysisResult:
     """
