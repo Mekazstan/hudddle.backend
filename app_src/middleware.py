@@ -35,8 +35,8 @@ def register_middleware(app: FastAPI):
         CORSMiddleware,
         allow_origins=[
             "https://app.hudddle.xyz",
-            "http://localhost:3000",  # for local development
-            "http://127.0.0.1:3000",  # for local development
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
         ],
         allow_methods=["*"],
         allow_headers=["*"],
@@ -46,5 +46,9 @@ def register_middleware(app: FastAPI):
     # TrustedHost middleware
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"],
+        allow_origins=[
+            "https://app.hudddle.xyz",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
     )

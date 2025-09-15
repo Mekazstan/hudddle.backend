@@ -16,7 +16,7 @@ from .schema import (
     UserCreateModel, UserLoginModel, AuthToken,
     PasswordResetConfirmModel, GoogleSignIn, UserSchema, UserUpdateSchema
 )
-from .service import UserService, upload_image_to_s3
+from .service import UserService, upload_image_to_cloudinary
 from .utils import (generate_password_hash, create_access_token, 
                     verify_google_token, verify_password)
 from .dependencies import (AccessTokenBearer, get_current_user, 
@@ -391,7 +391,7 @@ async def update_profile_image(
     session: AsyncSession = Depends(get_session)
 ):
     try:
-        image_url = await upload_image_to_s3(profile_image)
+        image_url = await upload_image_to_cloudinary(profile_image)
         if image_url:
             update_dict = {"avatar_url": image_url}
             updated_user = await user_service.update_user(user, update_dict, session)

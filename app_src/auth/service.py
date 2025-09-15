@@ -11,6 +11,7 @@ from .utils import generate_password_hash
 import logging
 from app_src.config import Config
 from datetime import datetime
+import cloudinary
 from sqlalchemy.exc import IntegrityError
 
 class UserService:
@@ -106,23 +107,16 @@ class UserService:
             )
             
 
-# AWS S3 Configuration
-AWS_ACCESS_KEY_ID = Config.AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY = Config.AWS_SECRET_ACCESS_KEY
-AWS_STORAGE_BUCKET_NAME = Config.AWS_STORAGE_BUCKET_NAME
-AWS_REGION = Config.AWS_REGION
-
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION,
+cloudinary.config(
+    cloud_name=Config.CLOUDINARY_CLOUD_NAME,
+    api_key=Config.CLOUDINARY_API_KEY,
+    api_secret=Config.CLOUDINARY_API_SECRET
 )
 
 
-async def upload_image_to_s3(file: UploadFile) -> Optional[str]:
+async def upload_image_to_cloudinary(file: UploadFile) -> Optional[str]:
     """
-    Uploads an image to AWS S3 and returns the URL.
+    Uploads an image to Cloudinary and returns the URL.
     """
     try:
         MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -130,29 +124,94 @@ async def upload_image_to_s3(file: UploadFile) -> Optional[str]:
             raise HTTPException(status_code=400, detail="File too large")
 
         # Generate a unique filename to avoid collisions
-        file_name = f"{uuid4()}-{file.filename}"
+        unique_filename = f"{uuid4()}-{file.filename.split('.')[0]}"
         
-        # Create the S3 key with the profile_images folder
-        s3_key = f"profile_images/{file_name}"
+        # Create the Cloudinary public_id with the profile_images folder
+        cloudinary_public_id = f"hudddle/profile_images/{unique_filename}"
 
         try:
-            # Upload the file to S3
-            s3.upload_fileobj(
-                file.file,
-                AWS_STORAGE_BUCKET_NAME,
-                s3_key,
-                ExtraArgs={
-                    'ContentType': file.content_type,
-                    'ACL': 'public-read'
+            # Read file content
+            file.file.seek(0)
+            file_content = await file.read()
+            
+            # Upload the file to Cloudinary
+            upload_result = cloudinary.uploader.upload(
+                file_content,
+                public_id=cloudinary_public_id,
+                resource_type="image",
+                format="auto",
+                quality="auto",
+                fetch_format="auto",
+                tags=["profile_image"],
+                context={
+                    'original_filename': file.filename,
+                    'upload_timestamp': datetime.utcnow().isoformat()
                 }
             )
-        except botocore.exceptions.ClientError as error:
-            raise error
-        # Construct the full URL to the uploaded file
-        image_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
-        return image_url
+            
+            # Return the secure URL
+            return upload_result['secure_url']
+            
+        except Exception as upload_error:
+            logging.error(f"Cloudinary upload error: {upload_error}")
+            raise upload_error
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error uploading to S3: {e}")
+        logging.error(f"Error uploading to Cloudinary: {e}")
         return None
     
+async def delete_profile_image(public_id: str) -> bool:
+    """
+    Deletes a profile image from Cloudinary using its public_id.
+    """
+    try:
+        result = cloudinary.uploader.destroy(
+            public_id,
+            resource_type="image"
+        )
+        
+        if result.get('result') == 'ok':
+            logging.info(f"Deleted profile image: {public_id} from Cloudinary")
+            return True
+        else:
+            logging.warning(f"Cloudinary profile image deletion returned: {result}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error deleting profile image from Cloudinary: {e}")
+        return False
+
+
+def extract_public_id_from_url(cloudinary_url: str) -> Optional[str]:
+    """
+    Extracts the public_id from a Cloudinary URL for deletion purposes.
     
+    Example:
+    Input: "https://res.cloudinary.com/your-cloud/image/upload/v123456/hudddle/profile_images/abc-123.jpg"
+    Output: "hudddle/profile_images/abc-123"
+    """
+    try:
+        from urllib.parse import urlparse
+        import re
+        
+        parsed_url = urlparse(cloudinary_url)
+        path = parsed_url.path
+        
+        # Extract public_id from Cloudinary URL pattern
+        # Pattern: /image/upload/v{version}/{public_id}.{format}
+        match = re.search(r'/image/upload/v\d+/(.+)\.[^.]+$', path)
+        if match:
+            return match.group(1)
+        
+        # Fallback pattern without version
+        match = re.search(r'/image/upload/(.+)\.[^.]+$', path)
+        if match:
+            return match.group(1)
+            
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error extracting public_id from URL: {e}")
+        return None
