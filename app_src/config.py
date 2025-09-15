@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # LANGSMITH_TRACING: str = "true"
     # LANGSMITH_PROJECT: str = "hudddle-xyz"
     # LANGSMITH_ENDPOINT: str = "https://api.langsmith.com"
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    AWS_STORAGE_BUCKET_NAME: str
+    AWS_REGION: str
     PAYSTACK_SECRET_KEY: str
     PAYSTACK_PUBLIC_KEY: str
     PAYSTACK_WEBHOOK_SECRET: str
