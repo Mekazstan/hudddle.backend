@@ -1,6 +1,4 @@
 from typing import Optional
-import boto3
-import botocore
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from fastapi import HTTPException, status, UploadFile
