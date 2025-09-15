@@ -2,8 +2,6 @@ asyncpg
 asgiref
 arq
 alembic
-boto3
-botocore
 celery
 celery[asyncio]
 deepgram-sdk
