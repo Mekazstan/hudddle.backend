@@ -2,7 +2,6 @@ asyncpg
 asgiref
 arq
 alembic
-bcrypt
 celery
 celery[asyncio]
 groq
