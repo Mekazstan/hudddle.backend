@@ -20,6 +20,7 @@ from app_src.tasks.schema import TaskSchema
 from datetime import datetime, timezone, date
 from app_src.config import Config
 import cloudinary
+import cloudinary.uploader
 from arq.connections import ArqRedis
 
 
