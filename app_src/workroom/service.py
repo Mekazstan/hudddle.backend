@@ -2,10 +2,10 @@ from collections import defaultdict
 import json
 import logging
 import re
-from deepgram import (
-    DeepgramClient,
-    PrerecordedOptions
-)
+# from deepgram import (
+#     DeepgramClient,
+#     PrerecordedOptions
+# )
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -966,33 +966,33 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
 # --------------------------------------------------------------------------------
 #  Audio Procesing Functions
 # --------------------------------------------------------------------------------
-async def process_audio(audio_url: str) -> str:
-    """
-    Processes the audio file from a URL (e.g., S3) using Deepgram.
-    """
-    try:
-        DG_API_KEY = Config.DG_API_KEY
-        deepgram: DeepgramClient = DeepgramClient(api_key=DG_API_KEY)
+# async def process_audio(audio_url: str) -> str:
+#     """
+#     Processes the audio file from a URL (e.g., S3) using Deepgram.
+#     """
+#     try:
+#         DG_API_KEY = Config.DG_API_KEY
+#         deepgram: DeepgramClient = DeepgramClient(api_key=DG_API_KEY)
 
-        AUDIO_URL = {"url": audio_url}
+#         AUDIO_URL = {"url": audio_url}
 
-        options = PrerecordedOptions(
-            model="nova-2",
-            smart_format=True,
-        )
+#         options = PrerecordedOptions(
+#             model="nova-2",
+#             smart_format=True,
+#         )
 
-        response = deepgram.listen.rest.v("1").transcribe_url(AUDIO_URL, options)
+#         response = deepgram.listen.rest.v("1").transcribe_url(AUDIO_URL, options)
 
-        transcript = response['results']['channels'][0]['alternatives'][0]['transcript']
+#         transcript = response['results']['channels'][0]['alternatives'][0]['transcript']
 
-        logging.info(f"Audio processed from URL: {audio_url}")
-        return transcript
+#         logging.info(f"Audio processed from URL: {audio_url}")
+#         return transcript
 
-    except Exception as e:
-        logging.error(f"Error processing audio with Deepgram from URL: {e}")
-        raise e
+#     except Exception as e:
+#         logging.error(f"Error processing audio with Deepgram from URL: {e}")
+#         raise e
 
-# async def store_audio_analysis_report(report_text: str, s3_key: str) -> bool:
+# # async def store_audio_analysis_report(report_text: str, s3_key: str) -> bool:
 #     """
 #     Stores the audio analysis report in AWS S3.
 #     """
@@ -1132,49 +1132,49 @@ async def get_user_session_screenshots(user_id: UUID, session_id: UUID) -> tuple
 #         logging.error(f"Error uploading audio to S3: {e}")
 #         return None, None
 
-async def analyze_text_from_audio(transcript: str, workroom_kpis: List[dict]) -> ImageAnalysisResult:
-    """
-    Analyzes the audio transcript and categorizes activities based on workroom KPIs.
-    This function is similar to analyze_image, but it takes text as input.
-    """
-    try:
-        prompt_content = [
-            {
-                "type": "text",
-                "text": "You are analyzing a transcript of a remote worker's audio. Now you are to analyze weather it aligns  Return your response as a JSON object conforming to the following schema:"
-            },
-            {
-                "type": "text",
-                "text": ImageAnalysisResult.schema_json()
-            },
-            {
-                "type": "text",
-                "text": f"KPIs: {workroom_kpis}"
-            },
-            {
-                "type": "text",
-                "text": f"Transcript: {transcript}"
-            }
-        ]
+# async def analyze_text_from_audio(transcript: str, workroom_kpis: List[dict]) -> ImageAnalysisResult:
+#     """
+#     Analyzes the audio transcript and categorizes activities based on workroom KPIs.
+#     This function is similar to analyze_image, but it takes text as input.
+#     """
+#     try:
+#         prompt_content = [
+#             {
+#                 "type": "text",
+#                 "text": "You are analyzing a transcript of a remote worker's audio. Now you are to analyze weather it aligns  Return your response as a JSON object conforming to the following schema:"
+#             },
+#             {
+#                 "type": "text",
+#                 "text": ImageAnalysisResult.schema_json()
+#             },
+#             {
+#                 "type": "text",
+#                 "text": f"KPIs: {workroom_kpis}"
+#             },
+#             {
+#                 "type": "text",
+#                 "text": f"Transcript: {transcript}"
+#             }
+#         ]
 
-        completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt_content}],
-            temperature=0.5,
-            max_completion_tokens=500,
-        )
-        analysis_json = completion.choices[0].message.content
-        if analysis_json:
-            try:
-                return ImageAnalysisResult.parse_raw(analysis_json)
-            except Exception as e:
-                logging.error(f"Error parsing LLM output to ImageAnalysisResult: {e}, Raw output: {analysis_json}")
-                return ImageAnalysisResult(activities=[], general_observations="Failed to parse LLM output.")
-        else:
-            return ImageAnalysisResult(activities=[], general_observations="No analysis from LLM.")
+#         completion = groq_client.chat.completions.create(
+#             model="llama-3.3-70b-versatile",
+#             messages=[{"role": "user", "content": prompt_content}],
+#             temperature=0.5,
+#             max_completion_tokens=500,
+#         )
+#         analysis_json = completion.choices[0].message.content
+#         if analysis_json:
+#             try:
+#                 return ImageAnalysisResult.parse_raw(analysis_json)
+#             except Exception as e:
+#                 logging.error(f"Error parsing LLM output to ImageAnalysisResult: {e}, Raw output: {analysis_json}")
+#                 return ImageAnalysisResult(activities=[], general_observations="Failed to parse LLM output.")
+#         else:
+#             return ImageAnalysisResult(activities=[], general_observations="No analysis from LLM.")
 
-    except Exception as e:
-        logging.error(f"Groq API Error during audio analysis: {str(e)}")
-        return ImageAnalysisResult(activities=[], general_observations=f"Groq API error: {e}")
+#     except Exception as e:
+#         logging.error(f"Groq API Error during audio analysis: {str(e)}")
+#         return ImageAnalysisResult(activities=[], general_observations=f"Groq API error: {e}")
 
 
