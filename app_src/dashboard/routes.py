@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 from typing import Dict, Any
 from app_src.achievements.service import update_user_streak
 from app_src.db.db_connect import get_session
 from app_src.auth.dependencies import get_current_user
-from app_src.db.models import User, FriendLink, UserStreak, Task, UserLevel
+from app_src.db.models import User, FriendLink, UserStreak, Task, UserLevel, task_assignees
 from datetime import date, datetime
 import cachetools.func
 
@@ -43,13 +43,41 @@ async def _get_user_levels(session: AsyncSession, user_id: str):
 
 async def _get_daily_tasks(session: AsyncSession, user_id: str, start_of_day: datetime, end_of_day: datetime):
     """
-    Fetches daily tasks
+    Fetches daily tasks created by the user, but excludes tasks that are 
+    assigned to other users (where the creator is not also an assignee).
+    
+    Returns tasks where:
+    1. User created the task AND (no assignees OR user is an assignee)
     """
+    # Subquery to get task IDs where the user is an assignee
+    assignee_subquery = (
+        select(task_assignees.c.task_id)
+        .where(task_assignees.c.user_id == user_id)
+        .scalar_subquery()
+    )
+    
+    # Subquery to get task IDs that have any assignees
+    has_assignees_subquery = (
+        select(task_assignees.c.task_id)
+        .group_by(task_assignees.c.task_id)
+        .scalar_subquery()
+    )
+    
     result_tasks = await session.execute(
         select(Task)
+        .outerjoin(task_assignees, Task.id == task_assignees.c.task_id)
         .where(Task.created_by_id == user_id)
         .where(Task.created_at >= start_of_day)
         .where(Task.created_at <= end_of_day)
+        .where(
+            or_(
+                # No assignees at all (task not assigned to anyone)
+                ~Task.id.in_(select(task_assignees.c.task_id)),
+                # OR user is one of the assignees
+                Task.id.in_(assignee_subquery)
+            )
+        )
+        .distinct()
     )
     
     daily_tasks = [
