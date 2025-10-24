@@ -1,4 +1,5 @@
 import json
+from fastapi.responses import JSONResponse
 from fastapi import (FastAPI, WebSocket, 
                      Query, Depends, status)
 from starlette.websockets import WebSocketState, WebSocketDisconnect
@@ -28,7 +29,6 @@ async def life_span(app:FastAPI):
     print(f"Server has been stopped")
 
 version = "v1"
-
 version_prefix =f"/api/{version}"
 
 
@@ -65,6 +65,18 @@ async def root():
             "redoc": "/redoc"
         }
     }
+    
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "healthy",
+            "version": version,
+            "service": "Hudddle API"
+        }
+    )
 
 @app.websocket("/api/v1/workrooms/{workroom_id}/ws")
 async def workroom_websocket_endpoint(
