@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 from app_src.arq_tasks import (
     send_email_task,
     send_workroom_invites,
+    send_friend_request_invite,
     send_welcome_email_task,
     process_image_and_store_task,
     process_workroom_end_session,
@@ -41,6 +42,7 @@ class WorkerSettings:
     functions = [
         send_email_task,
         send_workroom_invites,
+        send_friend_request_invite,
         send_welcome_email_task,
         process_image_and_store_task,
         process_workroom_end_session,

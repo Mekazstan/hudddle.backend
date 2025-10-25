@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
 from app_src.redis_config import get_redis_pool
-from .schema import (FullMemberSchema, LeaderboardEntrySchema, MemberMetricSchema, UserKPIMetricHistorySchema, UserKPISummarySchema, WorkroomCreate, WorkroomDetailsSchema, WorkroomKPIMetricHistorySchema, WorkroomKPISummarySchema, WorkroomPerformanceMetricSchema, 
+from .schema import (FullMemberSchema, LeaderboardEntrySchema, MemberMetricSchema, UserKPIMetricHistorySchema, 
+                     UserKPISummarySchema, WorkroomCreate, WorkroomKPIMetricHistorySchema, WorkroomPerformanceMetricSchema, 
                      WorkroomSchema, WorkroomTaskCreate, WorkroomUpdate)
 from typing import List, Dict, Optional
 from uuid import UUID
@@ -222,19 +223,25 @@ async def create_workroom(
                 user_id=current_user.id,
                 weight=pm_data.weight,
             ))
+        await session.flush()
 
         # Add creator as member
         session.add(WorkroomMemberLink(
             workroom_id=new_workroom.id,
             user_id=current_user.id,
         ))
+        await session.flush()
 
         # Process friend emails
         emails_to_invite = []
+        added_member_ids = [current_user.id]
+
         if workroom_data.friend_emails:
             for friend_email in workroom_data.friend_emails:
+                friend_email_lower = friend_email.lower()
+
                 friend_user = (await session.execute(
-                    select(User).filter_by(email=friend_email)
+                    select(User).where(func.lower(User.email) == friend_email_lower)
                 )).scalar_one_or_none()
                 
                 if friend_user:
@@ -250,43 +257,35 @@ async def create_workroom(
                             workroom_id=new_workroom.id,
                             user_id=friend_user.id
                         ))
+                        added_member_ids.append(friend_user.id)
                 else:
-                    emails_to_invite.append(friend_email)
+                    emails_to_invite.append(friend_email_lower)
 
-        await session.commit()
+        await session.flush()
 
-        # 5. Explicitly load relationships
-        await session.refresh(new_workroom)
-        result = await session.execute(
-            select(Workroom)
-            .where(Workroom.id == new_workroom.id)
-            .options(
-                selectinload(Workroom.performance_metrics),
-                selectinload(Workroom.members),
-                selectinload(Workroom.leaderboards)
-            )
-        )
-        loaded_workroom = result.scalar_one()
-        
-        # 6. Fetch all members
+        # 5. Fetch ALL members (including newly added ones)
         all_members_result = await session.execute(
-            select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == new_workroom.id)
+            select(User)
+            .join(WorkroomMemberLink)
+            .where(WorkroomMemberLink.workroom_id == new_workroom.id)
         )
         all_members = all_members_result.scalars().all()
         
-        # Create default leaderboard entries for all members
-        base_score = 30  # Starting score for the creator
+        print(f"📊 Creating leaderboard for {len(all_members)} members")
+        
+        # 6. Create leaderboard entries for ALL members
+        base_score = 30
         for i, member in enumerate(all_members):
-            # Create progressively lower scores for other members
-            member_score = max(base_score - (i * 3), 2)  # Ensure minimum score of 20
+            # Create progressively lower scores for ranking
+            member_score = max(base_score - (i * 2), 10)  # Minimum score of 10
             
-            # Calculate component scores (these can be adjusted based on your scoring logic)
-            kpi_score = round(member_score * 0.5, 1)    # 50% of total score
-            task_score = round(member_score * 0.3, 1)   # 30% of total score
-            teamwork_score = round(member_score * 0.15, 1)  # 15% of total score
-            engagement_score = round(member_score * 0.05, 1)  # 5% of total score
+            # Calculate component scores
+            kpi_score = round(member_score * 0.5, 1)       # 50% of total
+            task_score = round(member_score * 0.3, 1)      # 30% of total
+            teamwork_score = round(member_score * 0.15, 1) # 15% of total
+            engagement_score = round(member_score * 0.05, 1) # 5% of total
             
-            session.add(Leaderboard(
+            leaderboard_entry = Leaderboard(
                 workroom_id=new_workroom.id,
                 user_id=member.id,
                 score=member_score,
@@ -295,34 +294,60 @@ async def create_workroom(
                 teamwork_score=teamwork_score,
                 engagement_score=engagement_score,
                 rank=i + 1
-            ))
-            
-        # 7. Fetch all performance metrics just created
+            )
+            session.add(leaderboard_entry)
+            print(f"  ✅ Added leaderboard entry for {member.email}: rank {i+1}, score {member_score}")
+        
+        await session.flush()
+        
+        # 7. Fetch performance metrics for KPI initialization
         performance_metrics_result = await session.execute(
-            select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == new_workroom.id)
+            select(WorkroomPerformanceMetric)
+            .where(WorkroomPerformanceMetric.workroom_id == new_workroom.id)
         )
         created_metrics = performance_metrics_result.scalars().all()
         
-        # 8. Initialize KPI structures
+        # 8. Initialize KPI data if needed (commented out as in your code)
         # await initialize_kpi_data_for_workroom(session, new_workroom, all_members, created_metrics)
 
-        # 9. Send invites to non-members
+        # 9. Commit all changes
+        await session.commit()
+        
+        # 10. Send invites to non-members AFTER commit
         if emails_to_invite:
+            print(f"📧 Sending invites to {len(emails_to_invite)} non-members")
             await redis.enqueue_job(
                 'send_workroom_invites',
                 new_workroom.name,
-                current_user.first_name or "Someone",
-                emails_to_invite
+                current_user.first_name or current_user.email,
+                emails_to_invite,
+                str(new_workroom.id)
             )
-
-        await session.commit()
+        
+        # 11. Fetch and return complete workroom with all relationships
+        result = await session.execute(
+            select(Workroom)
+            .where(Workroom.id == new_workroom.id)
+            .options(
+                selectinload(Workroom.performance_metrics),
+                selectinload(Workroom.members),
+                selectinload(Workroom.leaderboards).selectinload(Leaderboard.user)
+            )
+        )
+        loaded_workroom = result.scalar_one()
+        
+        print(f"✅ Workroom created with {len(loaded_workroom.members)} members and {len(loaded_workroom.leaderboards)} leaderboard entries")
+        
         return loaded_workroom
         
     except Exception as e:
         await session.rollback()
+        print(f"❌ Error creating workroom: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Failed to create workroom: {str(e)}"
         )
 
 @workroom_router.patch("/{workroom_id}", response_model=WorkroomSchema)
@@ -393,12 +418,14 @@ async def get_workroom_details(
     workroom_result = await session.execute(
         select(Workroom)
         .options(
-            selectinload(Workroom.leaderboards).joinedload(Leaderboard.user),
-            selectinload(Workroom.members)
+            selectinload(Workroom.leaderboards).selectinload(Leaderboard.user),
+            selectinload(Workroom.members),
+            selectinload(Workroom.performance_metrics)
         )
         .where(Workroom.id == workroom_id)
     )
     workroom = workroom_result.scalar_one_or_none()
+
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
 
@@ -411,130 +438,183 @@ async def get_workroom_details(
     )
     if not result.scalar():
         raise HTTPException(status_code=403, detail="Not authorized to access this workroom")
+    
+    members_result = await session.execute(
+        select(User)
+        .join(WorkroomMemberLink)
+        .where(WorkroomMemberLink.workroom_id == workroom_id)
+    )
+    all_members = members_result.scalars().all()
+    print(f"📊 Found {len(all_members)} members in workroom")
+    
+    leaderboard_data = []
 
-    # Process leaderboard data
     if workroom.leaderboards:
-        leaderboard_data = []
-        for leaderboard in workroom.leaderboards:
-            leaderboard_data.append({
-                "user_id": leaderboard.user_id,
-                "user_name": format_member_name(leaderboard.user.first_name, leaderboard.user.last_name),
-                "avatar_url": leaderboard.user.avatar_url,
-                "score": leaderboard.score,
-                "rank": leaderboard.rank,
-                "kpi_score": leaderboard.kpi_score,
-                "task_score": leaderboard.task_score,
-                "teamwork_score": leaderboard.teamwork_score,
-                "engagement_score": leaderboard.engagement_score
-            })
-
-        # Sort leaderboard by score (descending) and calculate ranks
+        print(f"📊 Found {len(workroom.leaderboards)} leaderboard entries in database")
+        
+        # Create a map of existing leaderboard entries
+        leaderboard_map = {lb.user_id: lb for lb in workroom.leaderboards}
+        
+        # Ensure ALL members have leaderboard entries
+        for member in all_members:
+            if member.id in leaderboard_map:
+                # Use existing leaderboard entry
+                lb = leaderboard_map[member.id]
+                leaderboard_data.append({
+                    "user_id": lb.user_id,
+                    "user_name": format_member_name(member.first_name, member.last_name),
+                    "avatar_url": member.avatar_url,
+                    "score": float(lb.score),
+                    "rank": lb.rank,
+                    "kpi_score": float(lb.kpi_score),
+                    "task_score": float(lb.task_score),
+                    "teamwork_score": float(lb.teamwork_score) if lb.teamwork_score else 0.0,
+                    "engagement_score": float(lb.engagement_score) if lb.engagement_score else 0.0
+                })
+            else:
+                # Create default entry for members without leaderboard data
+                print(f"⚠️ Member {member.email} missing leaderboard entry, creating default")
+                default_score = 10.0
+                leaderboard_data.append({
+                    "user_id": member.id,
+                    "user_name": format_member_name(member.first_name, member.last_name),
+                    "avatar_url": member.avatar_url,
+                    "score": default_score,
+                    "rank": len(all_members),  # Put at end
+                    "kpi_score": round(default_score * 0.5, 1),
+                    "task_score": round(default_score * 0.3, 1),
+                    "teamwork_score": round(default_score * 0.15, 1),
+                    "engagement_score": round(default_score * 0.05, 1)
+                })
+                
+                # Optionally create missing leaderboard entry in DB
+                new_lb = Leaderboard(
+                    workroom_id=workroom_id,
+                    user_id=member.id,
+                    score=int(default_score),
+                    kpi_score=round(default_score * 0.5, 1),
+                    task_score=int(default_score * 0.3),
+                    teamwork_score=int(default_score * 0.15),
+                    engagement_score=int(default_score * 0.05),
+                    rank=len(all_members)
+                )
+                session.add(new_lb)
+        
+        # Sort by score and recalculate ranks
         leaderboard_data.sort(key=lambda x: x["score"], reverse=True)
         for i, entry in enumerate(leaderboard_data, start=1):
             entry["rank"] = i
+            
     else:
-        # Generate default leaderboard data based on workroom members
-        members_result = await session.execute(
-            select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == workroom_id)
-        )
-        members = members_result.scalars().all()
+        # No leaderboard entries exist - create them all
+        print(f"⚠️ No leaderboard entries found, creating for all {len(all_members)} members")
         
-        leaderboard_data = []
-        base_score = 30  # Starting score for default data
-        for i, member in enumerate(members):
-            # Create progressively lower scores for default ranking
-            member_score = max(base_score - (i * 3), 2)  # Ensure minimum score of 20
+        base_score = 30
+        for i, member in enumerate(all_members):
+            member_score = max(base_score - (i * 2), 10)
+            
             leaderboard_data.append({
                 "user_id": member.id,
                 "user_name": format_member_name(member.first_name, member.last_name),
                 "avatar_url": member.avatar_url,
-                "score": member_score,
+                "score": float(member_score),
                 "rank": i + 1,
-                "kpi_score": round(member_score * 0.5, 1),  # KPI contributes 50%
-                "task_score": round(member_score * 0.3, 1),  # Tasks contribute 30%
-                "teamwork_score": round(member_score * 0.15, 1),  # Teamwork 15%
-                "engagement_score": round(member_score * 0.05, 1)  # Engagement 5%
+                "kpi_score": round(member_score * 0.5, 1),
+                "task_score": round(member_score * 0.3, 1),
+                "teamwork_score": round(member_score * 0.15, 1),
+                "engagement_score": round(member_score * 0.05, 1)
             })
+            
+            # Create leaderboard entry in database
+            session.add(Leaderboard(
+                workroom_id=workroom_id,
+                user_id=member.id,
+                score=member_score,
+                kpi_score=round(member_score * 0.5, 1),
+                task_score=round(member_score * 0.3, 1),
+                teamwork_score=round(member_score * 0.15, 1),
+                engagement_score=round(member_score * 0.05, 1),
+                rank=i + 1
+            ))
+    
+    # Commit any new leaderboard entries
+    await session.commit()
+    
+    print(f"✅ Final leaderboard has {len(leaderboard_data)} entries")
 
-    # Get all members (rest of your existing member processing code remains the same)
-    member_results = await session.execute(
-        select(User).join(WorkroomMemberLink).where(WorkroomMemberLink.workroom_id == workroom_id)
-    )
-    members = member_results.scalars().all()
-
-    # Get user KPI summaries
+    # 5. Get user KPI summaries
     kpi_summaries_result = await session.execute(
         select(UserKPISummary).where(UserKPISummary.workroom_id == workroom_id)
     )
     user_kpi_summaries = kpi_summaries_result.scalars().all()
     summary_by_user = {s.user_id: s for s in user_kpi_summaries}
 
-    # Get all KPI metric definitions for the workroom
+    # 6. Get performance metrics
     performance_metrics_result = await session.execute(
-        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+        select(WorkroomPerformanceMetric)
+        .where(WorkroomPerformanceMetric.workroom_id == workroom_id)
     )
     performance_metrics_objs = performance_metrics_result.scalars().all()
-    performance_metrics = [WorkroomPerformanceMetricSchema.from_orm(metric) for metric in performance_metrics_objs]
+    performance_metrics = [
+        WorkroomPerformanceMetricSchema.from_orm(metric) 
+        for metric in performance_metrics_objs
+    ]
     expected_kpis = [metric.kpi_name for metric in performance_metrics_objs]
-
     kpi_weight_map = {metric.kpi_name: metric.weight for metric in performance_metrics_objs}
     
-    # Build user metrics map
+    # 7. Build user metrics map
     metrics_by_user = {}
     for summary in user_kpi_summaries:
         raw_metrics = summary.kpi_breakdown or []
         metric_map = {}
+        
         for m in raw_metrics:
-            if isinstance(m, dict):
-                if "kpi_name" in m:
-                    metric_map[m["kpi_name"]] = m
+            if isinstance(m, dict) and "kpi_name" in m:
+                metric_map[m["kpi_name"]] = m
 
         complete_metrics = []
         for kpi_name in expected_kpis:
             metric_data = metric_map.get(kpi_name, {})
-            complete_metrics.append(
-                {
-                    "kpi_name":kpi_name,
-                    "percentage":metric_data.get("percentage", 0)
-                }
-            )
+            complete_metrics.append({
+                "kpi_name": kpi_name,
+                "percentage": metric_data.get("percentage", 0)
+            })
         metrics_by_user[summary.user_id] = complete_metrics
 
-    # Fetch user KPI metric history (for line chart)
+    # 8. Fetch user KPI metric history
     user_history_result = await session.execute(
-        select(UserKPIMetricHistory).where(UserKPIMetricHistory.workroom_id == workroom_id)
+        select(UserKPIMetricHistory)
+        .where(UserKPIMetricHistory.workroom_id == workroom_id)
     )
     user_metric_histories = user_history_result.scalars().all()
 
-    history_by_user: dict[UUID, list[UserKPIMetricHistory]] = {}
+    history_by_user = {}
     for record in user_metric_histories:
         history_by_user.setdefault(record.user_id, []).append(record)
 
-    # Build full member list
+    # 9. Build full member list with leaderboard data
     full_members = []
-    for member in members:
+    leaderboard_map = {entry["user_id"]: entry for entry in leaderboard_data}
+    
+    for member in all_members:
         user_metrics = metrics_by_user.get(member.id, [])
         summary = summary_by_user.get(member.id)
 
-        # Find leaderboard entry for this user
+        # Get leaderboard entry for this user
         leaderboard_entry = None
-        if leaderboard_data:
-            user_entry = next(
-                (entry for entry in leaderboard_data if entry["user_id"] == member.id),
-                None
+        if member.id in leaderboard_map:
+            user_lb = leaderboard_map[member.id]
+            leaderboard_entry = LeaderboardEntrySchema(
+                score=user_lb["score"],
+                rank=user_lb["rank"],
+                kpi_score=user_lb["kpi_score"],
+                task_score=user_lb["task_score"],
+                teamwork_score=user_lb.get("teamwork_score", 0.0),
+                engagement_score=user_lb.get("engagement_score", 0.0)
             )
-            if user_entry:
-                leaderboard_entry = LeaderboardEntrySchema(
-                    score=user_entry["score"],
-                    rank=user_entry["rank"],
-                    kpi_score=user_entry["kpi_score"],
-                    task_score=user_entry["task_score"],
-                    teamwork_score=user_entry.get("teamwork_score"),
-                    engagement_score=user_entry.get("engagement_score")
-                )
 
-        kpi_summary = None
-        if summary is not None:
+        # Build KPI summary
+        if summary:
             kpi_summary = {
                 "overall_alignment_percentage": summary.overall_alignment_percentage,
                 "summary_text": summary.summary_text,
@@ -545,13 +625,17 @@ async def get_workroom_details(
                 "overall_alignment_percentage": 0.0,
                 "summary_text": f"No summary for {member.first_name or 'User'}",
                 "kpi_breakdown": [
-                    {"kpi_name":kpi, "percentage":0.0, "weight": kpi_weight_map.get(kpi, 0.0)}
+                    {
+                        "kpi_name": kpi, 
+                        "percentage": 0.0, 
+                        "weight": kpi_weight_map.get(kpi, 0.0)
+                    }
                     for kpi in expected_kpis
                 ]
             }
 
-        # Build KPI metric history for member
-        if history_by_user.get(member.id):
+        # Build KPI metric history
+        if member.id in history_by_user:
             kpi_metric_history = [
                 UserKPIMetricHistorySchema(
                     kpi_name=record.kpi_name,
@@ -561,14 +645,11 @@ async def get_workroom_details(
                 for record in history_by_user[member.id]
             ]
         else:
-            # Provide default KPI metric history if none found
-            kpi_metric_history = [
-                {
-                    "kpi_name":"Overall KPI Alignment",
-                    "date":date.today(),
-                    "alignment_percentage":0.0
-                }
-            ]
+            kpi_metric_history = [{
+                "kpi_name": "Overall KPI Alignment",
+                "date": date.today(),
+                "alignment_percentage": 0.0
+            }]
 
         full_members.append(
             FullMemberSchema(
@@ -588,37 +669,44 @@ async def get_workroom_details(
             )
         )
 
-    # Completed and pending task counts
+    # 10. Get task counts
     completed_task_count = (await session.execute(
         select(func.count(Task.id))
-        .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.COMPLETED)
+        .where(
+            Task.workroom_id == workroom_id, 
+            Task.status == TaskStatus.COMPLETED
+        )
     )).scalar() or 0
 
     pending_task_count = (await session.execute(
         select(func.count(Task.id))
-        .where(Task.workroom_id == workroom_id, Task.status == TaskStatus.PENDING)
+        .where(
+            Task.workroom_id == workroom_id, 
+            Task.status == TaskStatus.PENDING
+        )
     )).scalar() or 0
 
-    # All tasks in the workroom
+    # 11. Get all tasks
     tasks_result = await session.execute(
         select(Task).where(Task.workroom_id == workroom_id)
     )
     tasks = tasks_result.scalars().all()
     task_schemas = [TaskSchema.from_orm(task) for task in tasks]
 
-    # Workroom KPI summary
+    # 12. Get workroom KPI summary
     wr_kpi_summary_result = await session.execute(
-        select(WorkroomKPISummary).where(WorkroomKPISummary.workroom_id == workroom_id)
-        .order_by(WorkroomKPISummary.date.desc()).limit(1)
+        select(WorkroomKPISummary)
+        .where(WorkroomKPISummary.workroom_id == workroom_id)
+        .order_by(WorkroomKPISummary.date.desc())
+        .limit(1)
     )
     wr_kpi_summary = wr_kpi_summary_result.scalar_one_or_none()
 
-    workroom_kpi_summary = None
-    if wr_kpi_summary is not None:
+    if wr_kpi_summary:
         workroom_kpi_summary = {
             "overall_alignment_percentage": wr_kpi_summary.overall_alignment_percentage,
             "summary_text": wr_kpi_summary.summary_text,
-            "kpi_breakdown": wr_kpi_summary.kpi_breakdown 
+            "kpi_breakdown": wr_kpi_summary.kpi_breakdown
         }
     else:
         workroom_kpi_summary = {
@@ -626,16 +714,18 @@ async def get_workroom_details(
             "summary_text": f"No summary for {workroom.name}",
             "kpi_breakdown": [
                 {
-                    "kpi_name": metrics.kpi_name, 
-                    "weight": metrics.weight,
-                    "metric_value":0.0
-                } for metrics in performance_metrics
+                    "kpi_name": metric.kpi_name,
+                    "weight": metric.weight,
+                    "metric_value": 0.0
+                }
+                for metric in performance_metrics
             ]
         }
 
-    # Workroom KPI metric history (line chart)
+    # 13. Get workroom KPI metric history
     wr_metric_history_result = await session.execute(
-        select(WorkroomKPIMetricHistory).where(WorkroomKPIMetricHistory.workroom_id == workroom_id)
+        select(WorkroomKPIMetricHistory)
+        .where(WorkroomKPIMetricHistory.workroom_id == workroom_id)
     )
     wr_metric_history = wr_metric_history_result.scalars().all()
 
@@ -649,13 +739,11 @@ async def get_workroom_details(
             for record in wr_metric_history
         ]
     else:
-        workroom_kpi_metric_history = [
-            {
-                "kpi_name": "Overall KPI Alignment",
-                "date": date.today(),
-                "alignment_percentage": 0.0
-            }
-        ]
+        workroom_kpi_metric_history = [{
+            "kpi_name": "Overall KPI Alignment",
+            "date": date.today(),
+            "alignment_percentage": 0.0
+        }]
 
     return {
         "id": workroom.id,
@@ -754,94 +842,127 @@ async def add_members_to_workroom(
     current_user: User = Depends(get_current_user),
     redis: ArqRedis = Depends(get_redis_pool)
 ):
-    today = date.today()
-    statement = select(Workroom).options(selectinload(Workroom.members)).where(Workroom.id == workroom_id)
-    result = await session.execute(statement)
-    workroom = result.scalars().first()
-    if not workroom:
-        raise HTTPException(status_code=404, detail="Workroom not found")
-    if workroom.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to add members to this workroom")
-    
-    # Track emails of users not found in database
-    non_member_emails = []
-    
-    # Fetch once before the for-loop
-    performance_metrics_result = await session.execute(
-        select(WorkroomPerformanceMetric).where(WorkroomPerformanceMetric.workroom_id == workroom_id)
-    )
-    performance_metrics = performance_metrics_result.scalars().all()
-    
-    for email in emails:
-        # Convert email to lowercase
-        email_lower = email.lower()
+    try:
+        # Fetch workroom
+        statement = select(Workroom).options(
+            selectinload(Workroom.members),
+            selectinload(Workroom.leaderboards)
+        ).where(Workroom.id == workroom_id)
+        result = await session.execute(statement)
+        workroom = result.scalars().first()
         
-        # Find user by email
-        user = (await session.execute(
-            select(User).where(func.lower(User.email) == email_lower)
-        )).scalar_one_or_none()
+        if not workroom:
+            raise HTTPException(status_code=404, detail="Workroom not found")
         
-        if user:
-            # Check if user is already a member
-            existing_member = (await session.execute(
-                select(WorkroomMemberLink).where(
-                    WorkroomMemberLink.workroom_id == workroom_id,
-                    WorkroomMemberLink.user_id == user.id
-                )
+        if workroom.created_by != current_user.id:
+            raise HTTPException(
+                status_code=403, 
+                detail="Not authorized to add members to this workroom"
+            )
+        
+        # Get current member count for ranking
+        current_member_count = len(workroom.members)
+        
+        # Fetch performance metrics
+        performance_metrics_result = await session.execute(
+            select(WorkroomPerformanceMetric)
+            .where(WorkroomPerformanceMetric.workroom_id == workroom_id)
+        )
+        performance_metrics = performance_metrics_result.scalars().all()
+        
+        # Track emails and newly added users
+        non_member_emails = []
+        newly_added_users = []
+        
+        for email in emails:
+            email_lower = email.lower()
+            
+            # Find user by email
+            user = (await session.execute(
+                select(User).where(func.lower(User.email) == email_lower)
             )).scalar_one_or_none()
             
-            if not existing_member:
-                # Add user to workroom
-                session.add(WorkroomMemberLink(
-                    workroom_id=workroom_id,
-                    user_id=user.id
-                ))
-            # # Build default KPI breakdown
-            # kpi_breakdown = [
-            #     {"kpi_name": metric.kpi_name, "percentage": 0, "weight": metric.weight} for metric in performance_metrics
-            # ]
-
-            # # Create UserKPISummary
-            # session.add(UserKPISummary(
-            #     user_id=user.id,
-            #     workroom_id=workroom_id,
-            #     date=datetime.utcnow().date(),
-            #     overall_alignment_percentage=0,
-            #     kpi_breakdown=kpi_breakdown,
-            #     summary_text=f"No summary for {user.first_name or user.email}"
-            # ))
-
-            # # Create UserKPIMetricHistory entries
-            # session.add(UserKPIMetricHistory(
-            #     user_id=user.id,
-            #     workroom_id=workroom_id,
-            #     kpi_name=f"{today} - Overall Alignment",
-            #     date=datetime.utcnow().date(),
-            #     alignment_percentage=0
-            # ))
-
-        else:
-            non_member_emails.append(email_lower)
-
-    await session.commit()
-    
-    # Send invites to non-member emails if any
-    if non_member_emails:
-        pass
-        await redis.enqueue_job(
-            'send_workroom_invites',
-            workroom.name,
-            current_user.first_name or "Someone",
-            non_member_emails
+            if user:
+                # Check if user is already a member
+                existing_member = (await session.execute(
+                    select(WorkroomMemberLink).where(
+                        WorkroomMemberLink.workroom_id == workroom_id,
+                        WorkroomMemberLink.user_id == user.id
+                    )
+                )).scalar_one_or_none()
+                
+                if not existing_member:
+                    # Add user to workroom
+                    session.add(WorkroomMemberLink(
+                        workroom_id=workroom_id,
+                        user_id=user.id
+                    ))
+                    newly_added_users.append(user)
+            else:
+                non_member_emails.append(email_lower)
+        
+        await session.flush()
+        
+        # Create leaderboard entries for newly added users
+        base_score = 30
+        for i, user in enumerate(newly_added_users):
+            # Calculate rank based on current + new members
+            new_rank = current_member_count + i + 1
+            member_score = max(base_score - (new_rank * 2), 10)
+            
+            # Calculate component scores
+            kpi_score = round(member_score * 0.5, 1)
+            task_score = round(member_score * 0.3, 1)
+            teamwork_score = round(member_score * 0.15, 1)
+            engagement_score = round(member_score * 0.05, 1)
+            
+            session.add(Leaderboard(
+                workroom_id=workroom_id,
+                user_id=user.id,
+                score=member_score,
+                kpi_score=kpi_score,
+                task_score=task_score,
+                teamwork_score=teamwork_score,
+                engagement_score=engagement_score,
+                rank=new_rank
+            ))
+            print(f"✅ Created leaderboard entry for new member {user.email}")
+        
+        await session.commit()
+        
+        # Send invites to non-member emails
+        if non_member_emails:
+            print(f"📧 Sending invites to {len(non_member_emails)} non-members")
+            await redis.enqueue_job(
+                'send_workroom_invites',
+                workroom.name,
+                current_user.first_name or current_user.email,
+                non_member_emails,
+                str(workroom_id)
+            )
+        
+        # Refresh and return updated workroom
+        await session.refresh(workroom)
+        
+        return {
+            "message": "Members added successfully",
+            "added_count": len(newly_added_users),
+            "invited_count": len(non_member_emails),
+            "workroom_id": workroom_id,
+            "non_member_emails": non_member_emails
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        print(f"❌ Error adding members: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add members: {str(e)}"
         )
-    
-    # Refresh and return updated workroom
-    await session.refresh(workroom)
-    return {
-        "message": "Members added successfully",
-        "workroom": workroom,
-        "non_member_emails": non_member_emails
-    }
 
 @workroom_router.get("/{workroom_id}/members")
 async def get_workroom_members(
@@ -1223,59 +1344,3 @@ async def analyze_screenshot(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred",
         )
-
-# @workroom_router.post("/analyze_audio")
-# async def analyze_audio(
-#     session_id: UUID,
-#     file: UploadFile = File(...),
-#     current_user: User = Depends(get_current_user),
-# ):
-#     """
-#     Endpoint to receive and process audio files using Celery.
-#     """
-#     try:
-#         timestamp = datetime.now(timezone.utc)
-#         user_id = current_user.id
-
-#         # Validate file type
-#         if not file.content_type.startswith("audio/"):
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail="Only audio files are allowed",
-#             )
-
-#         # Upload the audio file to S3
-#         audio_url, audio_s3_key = await upload_audio_to_s3(
-#             file, user_id, session_id, timestamp.strftime("%Y%m%d_%H%M%S")
-#         )
-#         if not audio_url:
-#             raise HTTPException(
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#                 detail="Failed to upload audio to S3",
-#             )
-
-#         # Trigger Celery task for background processing
-#         process_audio_and_store_report_task.apply_async(
-#             kwargs={
-#                 'user_id': str(user_id),
-#                 'session_id': str(session_id),
-#                 'audio_url': audio_url,
-#                 'audio_s3_key': audio_s3_key,
-#                 'timestamp_str': timestamp.isoformat()
-#             })
-
-#         return (
-#             {"message": "Audio received for analysis. Processing in background."},
-#             status.HTTP_202_ACCEPTED,
-#         )
-
-#     except HTTPException as e:
-#         raise e
-#     except Exception as e:
-#         logging.error(f"Error processing audio: {e}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Error processing audio: {str(e)}",
-#         )
-        
-        

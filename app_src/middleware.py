@@ -20,7 +20,7 @@ def register_middleware(app: FastAPI):
     # 1. TrustedHost middleware (outermost - first to execute)
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"],  # Consider restricting this in production
+        allowed_hosts=["*"],
     )
     
     # 2. CORS middleware (must be early to handle preflight requests)
@@ -31,14 +31,14 @@ def register_middleware(app: FastAPI):
             "http://localhost:3000",
             "http://127.0.0.1:3000",
             "http://localhost:3001",
-            "http://localhost:5173",  # Vite default port
+            "http://localhost:5173",
             "http://localhost:5174",
-            "http://localhost:8080",  # Common dev port
+            "http://localhost:8080",
         ],
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,
-        expose_headers=["*"],  # Allow frontend to read all headers
+        expose_headers=["*"],
     )
     
     # 3. Session middleware
@@ -46,8 +46,8 @@ def register_middleware(app: FastAPI):
         SessionMiddleware,
         secret_key=Config.JWT_SECRET_KEY,
         session_cookie="session",
-        same_site="lax",  # Important for CORS
-        https_only=False,  # Set to True in production
+        same_site="lax",
+        https_only=False,
     )
 
     # 4. Custom logging middleware (innermost - last to execute)

@@ -251,6 +251,238 @@ async def send_workroom_invites(ctx, workroom_name, creator_name, recipient_emai
             "workroom": workroom_name
         }
 
+async def send_friend_request_invite(
+    ctx,
+    sender_name: str,
+    sender_email: str,
+    recipient_email: str,
+    _job_try: int = 0
+):
+    """
+    Send friend request invitation to non-users.
+    
+    Args:
+        ctx: ARQ context
+        sender_name: Name of the person sending the request
+        sender_email: Email of the sender
+        recipient_email: Email of the person being invited
+        _job_try: Current retry attempt
+    """
+    if 'mail' not in ctx:
+        raise RuntimeError("ARQ ctx['mail'] not set — did startup() run?")
+    
+    mail = ctx['mail']
+    logger.info(f"📧 Sending friend request invite from {sender_name} to {recipient_email}")
+    
+    subject = f"{sender_name} wants to connect with you on Hudddle"
+    
+    email_body = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Friend Request from {sender_name}</title>
+        <style>
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 0;
+                background-color: #f4f4f4;
+                color: #333;
+                line-height: 1.6;
+            }}
+            .email-wrapper {{
+                max-width: 600px;
+                margin: 20px auto;
+                background-color: #ffffff;
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }}
+            .email-header {{
+                background: linear-gradient(135deg, #9b87f5 0%, #7E69AB 100%);
+                text-align: center;
+                padding: 40px 20px;
+            }}
+            .logo {{
+                color: white;
+                font-size: 32px;
+                font-weight: bold;
+                letter-spacing: 1px;
+                margin: 0;
+            }}
+            .container {{
+                padding: 40px;
+                text-align: center;
+            }}
+            h1 {{
+                color: #1A1F2C;
+                font-size: 26px;
+                margin-bottom: 20px;
+                font-weight: 600;
+            }}
+            p {{
+                color: #555;
+                font-size: 16px;
+                margin: 20px 0;
+                line-height: 1.8;
+            }}
+            .sender-name {{
+                color: #9b87f5;
+                font-weight: bold;
+                font-size: 18px;
+            }}
+            .cta-button {{
+                display: inline-block;
+                padding: 16px 40px;
+                margin: 30px 0;
+                background: linear-gradient(135deg, #9b87f5 0%, #7E69AB 100%);
+                color: white;
+                text-decoration: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 16px;
+                transition: transform 0.2s;
+            }}
+            .cta-button:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 6px 12px rgba(155, 135, 245, 0.3);
+            }}
+            .features {{
+                text-align: left;
+                margin: 30px 0;
+                padding: 20px;
+                background-color: #f9f9f9;
+                border-radius: 8px;
+            }}
+            .feature-item {{
+                margin: 15px 0;
+                padding-left: 30px;
+                position: relative;
+            }}
+            .feature-item:before {{
+                content: "✓";
+                position: absolute;
+                left: 0;
+                color: #9b87f5;
+                font-weight: bold;
+                font-size: 18px;
+            }}
+            .footer {{
+                padding: 30px 20px;
+                text-align: center;
+                font-size: 14px;
+                color: #666;
+                border-top: 1px solid #eee;
+                background-color: #fafafa;
+            }}
+            .footer p {{
+                margin: 8px 0;
+                font-size: 14px;
+            }}
+            .footer a {{
+                color: #9b87f5;
+                text-decoration: none;
+                font-weight: 500;
+            }}
+            .footer a:hover {{
+                text-decoration: underline;
+            }}
+            @media only screen and (max-width: 600px) {{
+                .email-wrapper {{
+                    width: 100%;
+                    margin: 0;
+                    border-radius: 0;
+                }}
+                .container {{
+                    padding: 30px 20px;
+                }}
+                .cta-button {{
+                    padding: 14px 30px;
+                    font-size: 14px;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-wrapper">
+            <div class="email-header">
+                <h1 class="logo">Hudddle</h1>
+            </div>
+            <div class="container">
+                <h1>👋 New Friend Request!</h1>
+                <p>Hi there!</p>
+                <p>
+                    <span class="sender-name">{sender_name}</span> wants to connect 
+                    with you on Hudddle!
+                </p>
+                
+                <div class="features">
+                    <div class="feature-item">Work together on shared tasks</div>
+                    <div class="feature-item">Track productivity together</div>
+                    <div class="feature-item">Join workrooms and collaborate</div>
+                    <div class="feature-item">Compete on leaderboards</div>
+                </div>
+                
+                <a href="{HUDDDLE_LINK}/signup?friend={sender_email}" class="cta-button">
+                    Accept & Join Hudddle
+                </a>
+                
+                <p style="font-size: 14px; color: #777; margin-top: 30px;">
+                    Create your free Hudddle account to accept this friend request 
+                    and start collaborating!
+                </p>
+            </div>
+            <div class="footer">
+                <p>Making work fun together! 🎉</p>
+                <p>
+                    Follow us on 
+                    <a href="https://x.com/hudddler">Twitter/X</a>
+                </p>
+                <p style="font-size: 12px; color: #999; margin-top: 20px;">
+                    This friend request was sent by {sender_name}. If you don't want 
+                    to receive these emails, you can unsubscribe anytime.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    try:
+        message = create_message(
+            recipients=[recipient_email],
+            subject=subject,
+            body=email_body
+        )
+        await mail.send_message(message)
+        logger.info(f"✅ Friend request invite sent to {recipient_email}")
+        
+        return {
+            "status": "completed",
+            "recipient": recipient_email,
+            "sender": sender_name
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to send friend request invite to {recipient_email}: {e}")
+        
+        # Retry logic
+        if _job_try < 3:
+            logger.info(f"🔄 Retrying friend request invite (attempt {_job_try + 1}/3)")
+            await ctx['redis'].enqueue_job(
+                'send_friend_request_invite',
+                sender_name,
+                sender_email,
+                recipient_email,
+                _defer_by=60,
+                _job_try=_job_try + 1
+            )
+        else:
+            logger.error(f"❌ Permanently failed to send friend request invite to {recipient_email}")
+        
+        raise
+
 async def process_image_and_store_task(ctx, user_id, session_id, image_url, image_filename, timestamp_str, _job_try=0):
     if 'session_maker' not in ctx:
         raise RuntimeError("ARQ ctx['session_maker'] not set — did startup() run?")

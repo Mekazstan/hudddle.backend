@@ -2,11 +2,7 @@ from collections import defaultdict
 import json
 import logging
 import re
-# from deepgram import (
-#     DeepgramClient,
-#     PrerecordedOptions
-# )
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +17,7 @@ from app_src.config import Config
 from typing import List
 from groq import Groq
 from datetime import datetime, timezone, timedelta
-from .schema import ImageAnalysisResult, UserDailyKPIReport
+from .schema import UserDailyKPIReport
 
 
 GROQ_API_KEY = Config.GROQ_API_KEY
@@ -963,52 +959,6 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         "summary_text": generated_summary
     }
 
-# --------------------------------------------------------------------------------
-#  Audio Procesing Functions
-# --------------------------------------------------------------------------------
-# async def process_audio(audio_url: str) -> str:
-#     """
-#     Processes the audio file from a URL (e.g., S3) using Deepgram.
-#     """
-#     try:
-#         DG_API_KEY = Config.DG_API_KEY
-#         deepgram: DeepgramClient = DeepgramClient(api_key=DG_API_KEY)
-
-#         AUDIO_URL = {"url": audio_url}
-
-#         options = PrerecordedOptions(
-#             model="nova-2",
-#             smart_format=True,
-#         )
-
-#         response = deepgram.listen.rest.v("1").transcribe_url(AUDIO_URL, options)
-
-#         transcript = response['results']['channels'][0]['alternatives'][0]['transcript']
-
-#         logging.info(f"Audio processed from URL: {audio_url}")
-#         return transcript
-
-#     except Exception as e:
-#         logging.error(f"Error processing audio with Deepgram from URL: {e}")
-#         raise e
-
-# # async def store_audio_analysis_report(report_text: str, s3_key: str) -> bool:
-#     """
-#     Stores the audio analysis report in AWS S3.
-#     """
-#     try:
-#         s3_client.put_object(
-#             Bucket=AWS_STORAGE_BUCKET_NAME,
-#             Key=s3_key,
-#             Body=report_text.encode("utf-8"),
-#             ContentType="application/json"
-#         )
-#         logging.info(f"Stored audio analysis report: {s3_key} in S3")
-#         return True
-#     except ClientError as e:
-#         logging.error(f"Error storing audio analysis report: {e}")
-#         return False
-
 async def delete_cloudinary_object(public_id: str) -> bool:
     """
     Deletes an object from Cloudinary.
@@ -1110,71 +1060,4 @@ async def get_user_session_screenshots(user_id: UUID, session_id: UUID) -> tuple
     except Exception as e:
         logging.error(f"Error listing user session screenshots: {e}")
         return [], []
-
-# async def upload_audio_to_s3(file: UploadFile, user_id: UUID, session_id: UUID, timestamp: str) -> Optional[str]:
-#     """
-#     Uploads an audio file to AWS S3 and returns the URL and key.
-#     """
-#     s3_key = f"user_{user_id}/session_{session_id}/audio_{timestamp}.{file.filename.split('.')[-1]}"
-#     try:
-#         s3_client.upload_fileobj(
-#             Fileobj=file.file,
-#             Bucket=AWS_STORAGE_BUCKET_NAME,
-#             Key=s3_key,
-#             ExtraArgs={
-#                 'ACL': 'public-read',
-#                 'ContentType': file.content_type
-#             }
-#         )
-#         audio_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
-#         return audio_url, s3_key
-#     except ClientError as e:
-#         logging.error(f"Error uploading audio to S3: {e}")
-#         return None, None
-
-# async def analyze_text_from_audio(transcript: str, workroom_kpis: List[dict]) -> ImageAnalysisResult:
-#     """
-#     Analyzes the audio transcript and categorizes activities based on workroom KPIs.
-#     This function is similar to analyze_image, but it takes text as input.
-#     """
-#     try:
-#         prompt_content = [
-#             {
-#                 "type": "text",
-#                 "text": "You are analyzing a transcript of a remote worker's audio. Now you are to analyze weather it aligns  Return your response as a JSON object conforming to the following schema:"
-#             },
-#             {
-#                 "type": "text",
-#                 "text": ImageAnalysisResult.schema_json()
-#             },
-#             {
-#                 "type": "text",
-#                 "text": f"KPIs: {workroom_kpis}"
-#             },
-#             {
-#                 "type": "text",
-#                 "text": f"Transcript: {transcript}"
-#             }
-#         ]
-
-#         completion = groq_client.chat.completions.create(
-#             model="llama-3.3-70b-versatile",
-#             messages=[{"role": "user", "content": prompt_content}],
-#             temperature=0.5,
-#             max_completion_tokens=500,
-#         )
-#         analysis_json = completion.choices[0].message.content
-#         if analysis_json:
-#             try:
-#                 return ImageAnalysisResult.parse_raw(analysis_json)
-#             except Exception as e:
-#                 logging.error(f"Error parsing LLM output to ImageAnalysisResult: {e}, Raw output: {analysis_json}")
-#                 return ImageAnalysisResult(activities=[], general_observations="Failed to parse LLM output.")
-#         else:
-#             return ImageAnalysisResult(activities=[], general_observations="No analysis from LLM.")
-
-#     except Exception as e:
-#         logging.error(f"Groq API Error during audio analysis: {str(e)}")
-#         return ImageAnalysisResult(activities=[], general_observations=f"Groq API error: {e}")
-
 

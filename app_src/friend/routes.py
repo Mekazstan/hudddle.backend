@@ -10,6 +10,8 @@ from app_src.auth.schema import UserSchema
 from app_src.auth.dependencies import get_current_user
 from app_src.db.db_connect import get_session
 from app_src.auth.service import UserService
+from arq.connections import ArqRedis
+from app_src.redis_config import get_redis_pool
 
 
 user_service = UserService() 
@@ -22,6 +24,7 @@ async def send_friend_request(
     request_data: FriendRequestSchema,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    redis: ArqRedis = Depends(get_redis_pool),
 ):
     receiver_email = request_data.receiver_email.lower()
 
@@ -30,7 +33,29 @@ async def send_friend_request(
     
     receiver = await user_service.get_user_by_email(receiver_email, session)
     if not receiver:
-        raise HTTPException(status_code=404, detail="Receiver not found")
+        # User doesn't exist - send invitation email
+        print(f"📧 User {receiver_email} not found. Sending invitation email.")
+        
+        try:
+            await redis.enqueue_job(
+                'send_friend_request_invite',
+                current_user.first_name or current_user.email,
+                current_user.email,
+                receiver_email
+            )
+            
+            return {
+                "status": "invitation_sent",
+                "message": f"Invitation email sent to {receiver_email}",
+                "receiver_email": receiver_email,
+                "is_new_user": True
+            }
+        except Exception as e:
+            print(f"❌ Failed to queue invitation email: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send invitation email"
+            )
     
     existing_request = await session.execute(
         select(FriendRequest).where(
@@ -54,7 +79,13 @@ async def send_friend_request(
     session.add(new_request)
     await session.commit()
     await session.refresh(new_request)
-    return new_request
+    return {
+        "status": "request_sent",
+        "message": "Friend request sent successfully",
+        "request_id": new_request.id,
+        "receiver_email": receiver.email,
+        "is_new_user": False
+    }
 
 @friend_router.post("/friends/request/accept")
 async def accept_friend_request_by_email(
@@ -97,33 +128,6 @@ async def accept_friend_request_by_email(
 
     await session.commit()
     return {"message": "Friend request accepted"}
-
-
-# @friend_router.post("/friends/request/{request_id}/accept")
-# async def accept_friend_request(
-#     request_id: UUID,
-#     session: AsyncSession = Depends(get_session),
-#     current_user: User = Depends(get_current_user),
-# ):
-#     friend_request = await session.get(FriendRequest, request_id)
-#     if not friend_request:
-#         raise HTTPException(status_code=404, detail="Friend request not found")
-#     if friend_request.receiver_id != current_user.id:
-#         raise HTTPException(status_code=403, detail="Not authorized to accept this request")
-    
-#     # Update the request status
-#     friend_request.status = FriendRequestStatus.accepted
-#     friend_request.updated_at = datetime.utcnow()
-#     session.add(friend_request)
-    
-#     # Insert two rows in FriendLink for symmetry.
-#     friend_link1 = FriendLink(user_id=friend_request.sender_id, friend_id=friend_request.receiver_id)
-#     friend_link2 = FriendLink(user_id=friend_request.receiver_id, friend_id=friend_request.sender_id)
-#     session.add(friend_link1)
-#     session.add(friend_link2)
-    
-#     await session.commit()
-#     return {"message": "Friend request accepted."}
 
 @friend_router.get("/friends", response_model=List[UserSchema])
 async def get_current_user_friends(
