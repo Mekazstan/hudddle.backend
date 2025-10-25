@@ -174,7 +174,11 @@ class User(Base):
     )
     payments = relationship("Payment", back_populates="user", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
-    workrooms_created = relationship("Workroom", back_populates="created_by_user")
+    workrooms_created = relationship(
+        "Workroom",
+        back_populates="created_by_user",
+        foreign_keys="[Workroom.created_by]"
+    )
     workrooms = relationship(
         "Workroom",
         secondary="workroom_member_links",
@@ -191,7 +195,8 @@ class User(Base):
     current_live_session_workroom = relationship(
         "Workroom",
         foreign_keys=[current_live_session_workroom_id],
-        uselist=False
+        uselist=False,
+        post_update=True
     )
     levels = relationship("UserLevel", back_populates="user", cascade="all, delete-orphan")
     task_collaborations_invited = relationship(
@@ -331,7 +336,11 @@ class Workroom(Base):
         overlaps="members"
     )
     tasks = relationship("Task", back_populates="workroom", cascade="all, delete-orphan")
-    created_by_user = relationship("User", back_populates="workrooms_created")
+    created_by_user = relationship(
+        "User",
+        back_populates="workrooms_created",
+        foreign_keys=[created_by]
+    )
     leaderboards = relationship("Leaderboard", back_populates="workroom", cascade="all, delete-orphan")
     live_sessions = relationship("WorkroomLiveSession", back_populates="workroom", cascade="all, delete-orphan")
     kpi_metric_history = relationship("WorkroomKPIMetricHistory", back_populates="workroom", cascade="all, delete-orphan")
@@ -342,8 +351,7 @@ class Workroom(Base):
     users_with_active_sessions = relationship(
         "User",
         foreign_keys="[User.current_live_session_workroom_id]",
-        back_populates="current_live_session_workroom",
-        uselist=True
+        back_populates="current_live_session_workroom"
     )
     
 class Task(Base):

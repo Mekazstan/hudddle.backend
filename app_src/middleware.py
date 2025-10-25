@@ -7,8 +7,7 @@ from app_src.config import Config
 import time
 import logging
 
-logger = logging.getLogger("uvicorn.access")
-logger.disabled = False
+logger = logging.getLogger("custom_api")
 
 def register_middleware(app: FastAPI):
     """
@@ -64,7 +63,9 @@ def register_middleware(app: FastAPI):
         # Calculate processing time
         processing_time = time.time() - start_time
         
-        # Log response
+        # Log response with custom logger
+        client_ip = request.client.host if request.client else "unknown"
+        client_port = request.client.port if request.client else "unknown"
         message = (
             f"{request.client.host}:{request.client.port} - "
             f"{request.method} - {request.url.path} - "
