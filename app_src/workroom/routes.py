@@ -26,6 +26,7 @@ from arq.connections import ArqRedis
 
 
 workroom_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 async def _fetch_workroom_display_data(session: AsyncSession, user_id: UUID):
     """Helper function to fetch and format workroom display data with member avatars."""
@@ -1163,29 +1164,131 @@ async def start_live_session(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Start a new live session in workroom"""
-    # Verify workroom access
-    workroom = await session.get(Workroom, workroom_id)
-    if not workroom:
-        raise HTTPException(status_code=404, detail="Workroom not found")
-
-    new_session = WorkroomLiveSession(
-        workroom_id=workroom_id,
-        screen_sharer_id=current_user.id,
-        is_active=True,
-        start_time=datetime.utcnow(),
-    )
-
-    session.add(new_session)
-    await session.commit()
-    await session.refresh(new_session)
-
-    return {
-        "session_id": str(new_session.id),
-        "message": "New live session started successfully",
-        "workroom_id": str(workroom_id),
-        "start_time": new_session.start_time.isoformat(),
-    }
+    """
+    Start a new live session in a workroom.
+    
+    Prevents users from starting multiple active sessions.
+    Tracks the current active workroom for the user.
+    """
+    try:
+        # 1. Verify workroom exists
+        workroom = await session.get(Workroom, workroom_id)
+        if not workroom:
+            raise HTTPException(status_code=404, detail="Workroom not found")
+        
+        # 2. Verify user is a member of the workroom
+        is_member = await session.execute(
+            select(WorkroomMemberLink).where(
+                WorkroomMemberLink.workroom_id == workroom_id,
+                WorkroomMemberLink.user_id == current_user.id
+            )
+        )
+        if not is_member.scalar():
+            raise HTTPException(
+                status_code=403,
+                detail="You are not a member of this workroom"
+            )
+        
+        # 3. Check if user already has an active session
+        if current_user.current_live_session_workroom_id:
+            # Get the workroom name for better error message
+            active_workroom = await session.get(
+                Workroom, 
+                current_user.current_live_session_workroom_id
+            )
+            
+            if active_workroom:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": f"You currently have an active live session in '{active_workroom.name}'",
+                        "current_workroom_id": str(current_user.current_live_session_workroom_id),
+                        "current_workroom_name": active_workroom.name,
+                        "action": "Please end your current session before starting a new one"
+                    }
+                )
+            else:
+                # Workroom was deleted but user still has reference
+                # Clear the stale reference
+                current_user.current_live_session_workroom_id = None
+                await session.flush()
+        
+        # 4. Check for any existing active sessions by this user (double-check)
+        existing_active = await session.execute(
+            select(WorkroomLiveSession).where(
+                WorkroomLiveSession.screen_sharer_id == current_user.id,
+                WorkroomLiveSession.is_active == True
+            )
+        )
+        existing_session = existing_active.scalar_one_or_none()
+        
+        if existing_session:
+            # Clean up inconsistent state
+            logger.warning(
+                f"User {current_user.id} had active session without tracking. "
+                f"Session: {existing_session.id}, Workroom: {existing_session.workroom_id}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "You have an existing active session",
+                    "session_id": str(existing_session.id),
+                    "workroom_id": str(existing_session.workroom_id)
+                }
+            )
+        
+        # 5. Create new live session
+        new_session = WorkroomLiveSession(
+            workroom_id=workroom_id,
+            screen_sharer_id=current_user.id,
+            is_active=True,
+            start_time=datetime.utcnow(),
+        )
+        session.add(new_session)
+        await session.flush()
+        
+        # 6. Update user's current active workroom
+        current_user.current_live_session_workroom_id = workroom_id
+        
+        # 7. Commit all changes
+        await session.commit()
+        await session.refresh(new_session)
+        
+        logger.info(
+            f"✅ User {current_user.email} started live session {new_session.id} "
+            f"in workroom '{workroom.name}' ({workroom_id})"
+        )
+        
+        return {
+            "session_id": str(new_session.id),
+            "message": f"Live session started successfully in '{workroom.name}'",
+            "workroom_id": str(workroom_id),
+            "workroom_name": workroom.name,
+            "start_time": new_session.start_time.isoformat(),
+            "screen_sharer": {
+                "id": str(current_user.id),
+                "name": f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.email
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await session.rollback()
+        logger.error(f"❌ Database error starting live session: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Database error occurred while starting session"
+        )
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"❌ Unexpected error starting live session: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
 
 @workroom_router.post("/{workroom_id}/end-live-session", status_code=status.HTTP_202_ACCEPTED)
 async def end_live_session(
@@ -1195,33 +1298,74 @@ async def end_live_session(
     current_user: User = Depends(get_current_user),
     redis: ArqRedis = Depends(get_redis_pool)
 ):
-    """Trigger the background task to end a live session in the workroom."""
+    """
+    End a live session in the workroom.
+    
+    Clears the user's current active workroom tracking.
+    Triggers background task to process session end.
+    """
     try:
-        # 1. Validate inputs and permissions
+        # 1. Validate workroom
         workroom = await session.get(Workroom, workroom_id)
         if not workroom:
             raise HTTPException(status_code=404, detail="Workroom not found")
 
-        live_session = await session.execute(
+        # 2. Validate live session
+        live_session_result = await session.execute(
             select(WorkroomLiveSession)
             .where(
                 WorkroomLiveSession.id == session_id,
                 WorkroomLiveSession.workroom_id == workroom_id
             )
         )
-        live_session = live_session.scalar_one_or_none()
+        live_session = live_session_result.scalar_one_or_none()
 
         if not live_session:
-            raise HTTPException(status_code=404, detail="Live session not found or doesn't belong to this workroom")
+            raise HTTPException(
+                status_code=404,
+                detail="Live session not found or doesn't belong to this workroom"
+            )
 
+        # 3. Verify ownership
+        if live_session.screen_sharer_id != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only end your own live sessions"
+            )
+
+        # 4. Check if already ended
         if not live_session.is_active:
-            raise HTTPException(status_code=400, detail="Live session is already ended")
+            raise HTTPException(
+                status_code=400,
+                detail="Live session is already ended"
+            )
+        
+        # 5. Check if already ending
+        if hasattr(live_session, 'is_ending') and live_session.is_ending:
+            return {
+                "message": "Session is already being processed for closure",
+                "session_id": str(session_id)
+            }
 
-        # 2. Immediately mark as ending to prevent duplicate requests
-        live_session.is_ending = True
+        # 6. Mark as ending to prevent duplicate requests
+        if hasattr(live_session, 'is_ending'):
+            live_session.is_ending = True
+        
+        # 7. Clear user's current active workroom IMMEDIATELY
+        if current_user.current_live_session_workroom_id == workroom_id:
+            current_user.current_live_session_workroom_id = None
+            logger.info(
+                f"🔓 Cleared active workroom tracking for user {current_user.email}"
+            )
+        else:
+            logger.warning(
+                f"⚠️ User {current_user.email} ending session in workroom {workroom_id} "
+                f"but current_live_session_workroom_id was {current_user.current_live_session_workroom_id}"
+            )
+        
         await session.commit()
 
-        # 3. Enqueue task with proper monitoring
+        # 8. Enqueue background task for processing
         job = await redis.enqueue_job(
             'process_workroom_end_session',
             str(workroom_id),
@@ -1229,26 +1373,221 @@ async def end_live_session(
             str(current_user.id)
         )
 
-        logging.info(
-            f"Started session closeout job {job.job_id} for "
-            f"workroom:{workroom_id} session:{session_id}"
+        logger.info(
+            f"✅ User {current_user.email} ended live session {session_id} "
+            f"in workroom '{workroom.name}'. Job {job.job_id} queued."
         )
 
         return {
-            "message": "Session end processing started",
+            "message": f"Session ended successfully in '{workroom.name}'",
             "session_id": str(session_id),
-            # "job_id": job.job_id
+            "workroom_id": str(workroom_id),
+            "workroom_name": workroom.name,
+            "status": "processing"
         }
 
+    except HTTPException:
+        raise
     except SQLAlchemyError as e:
         await session.rollback()
-        logging.error(f"Database error during session end: {str(e)}")
-        raise HTTPException(status_code=500, detail="Database error occurred")
-
+        logger.error(f"❌ Database error ending live session: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Database error occurred while ending session"
+        )
     except Exception as e:
-        logging.error(f"Unexpected error ending session: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        await session.rollback()
+        logger.error(f"❌ Unexpected error ending session: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
 
+
+@workroom_router.get("/my-active-session")
+async def get_my_active_session(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get the user's current active live session with full workroom details.
+    
+    Returns session info plus workroom details like members, tasks count, etc.
+    Useful for frontend to check status on page load and display context.
+    """
+    if not current_user.current_live_session_workroom_id:
+        return {
+            "has_active_session": False,
+            "session": None,
+            "workroom": None
+        }
+    
+    # Get the active session details with workroom relationship
+    active_session_result = await session.execute(
+        select(WorkroomLiveSession)
+        .options(selectinload(WorkroomLiveSession.workroom))
+        .where(
+            WorkroomLiveSession.screen_sharer_id == current_user.id,
+            WorkroomLiveSession.workroom_id == current_user.current_live_session_workroom_id,
+            WorkroomLiveSession.is_active == True
+        )
+    )
+    active_session = active_session_result.scalar_one_or_none()
+    
+    if not active_session:
+        # Inconsistent state - clear the tracking
+        current_user.current_live_session_workroom_id = None
+        await session.commit()
+        
+        return {
+            "has_active_session": False,
+            "session": None,
+            "workroom": None
+        }
+    
+    # Get workroom with members
+    workroom_result = await session.execute(
+        select(Workroom)
+        .options(selectinload(Workroom.members))
+        .where(Workroom.id == active_session.workroom_id)
+    )
+    workroom = workroom_result.scalar_one_or_none()
+    
+    if not workroom:
+        # Workroom was deleted
+        current_user.current_live_session_workroom_id = None
+        await session.commit()
+        
+        return {
+            "has_active_session": False,
+            "session": None,
+            "workroom": None
+        }
+    
+    # Get member count
+    member_count = len(workroom.members)
+    
+    # Get task counts
+    completed_tasks = await session.execute(
+        select(func.count(Task.id)).where(
+            Task.workroom_id == workroom.id,
+            Task.status == TaskStatus.COMPLETED
+        )
+    )
+    completed_count = completed_tasks.scalar() or 0
+    
+    pending_tasks = await session.execute(
+        select(func.count(Task.id)).where(
+            Task.workroom_id == workroom.id,
+            Task.status == TaskStatus.PENDING
+        )
+    )
+    pending_count = pending_tasks.scalar() or 0
+    
+    # Get member details (basic info only)
+    members_list = [
+        {
+            "id": str(member.id),
+            "name": f"{member.first_name or ''} {member.last_name or ''}".strip() or member.email,
+            "avatar_url": member.avatar_url,
+            "email": member.email
+        }
+        for member in workroom.members
+    ]
+    
+    # Calculate session duration
+    duration_seconds = (datetime.utcnow() - active_session.start_time).total_seconds()
+    
+    return {
+        "has_active_session": True,
+        "session": {
+            "session_id": str(active_session.id),
+            "start_time": active_session.start_time.isoformat(),
+            "duration_seconds": duration_seconds,
+            "duration_formatted": f"{int(duration_seconds // 3600)}h {int((duration_seconds % 3600) // 60)}m"
+        },
+        "workroom": {
+            "id": str(workroom.id),
+            "name": workroom.name,
+            "created_at": workroom.created_at.isoformat() if workroom.created_at else None,
+            "member_count": member_count,
+            "members": members_list,
+            "tasks": {
+                "completed": completed_count,
+                "pending": pending_count,
+                "total": completed_count + pending_count
+            }
+        }
+    }
+    
+@workroom_router.post("/cleanup-stale-sessions")
+async def cleanup_stale_sessions(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Emergency cleanup endpoint to fix inconsistent session states.
+    
+    Use this if a user is stuck with an active session marker
+    but no actual active session exists.
+    """
+    try:
+        # Check for active sessions
+        active_sessions = await session.execute(
+            select(WorkroomLiveSession).where(
+                WorkroomLiveSession.screen_sharer_id == current_user.id,
+                WorkroomLiveSession.is_active == True
+            )
+        )
+        active_session_list = active_sessions.scalars().all()
+        
+        if not active_session_list:
+            # No active sessions but user might have tracking set
+            if current_user.current_live_session_workroom_id:
+                logger.warning(
+                    f"🧹 Cleaning up stale tracking for user {current_user.email}. "
+                    f"Had workroom {current_user.current_live_session_workroom_id} "
+                    f"but no active sessions."
+                )
+                current_user.current_live_session_workroom_id = None
+                await session.commit()
+                
+                return {
+                    "message": "Cleaned up stale session tracking",
+                    "had_stale_tracking": True
+                }
+            else:
+                return {
+                    "message": "No active sessions or stale tracking found",
+                    "had_stale_tracking": False
+                }
+        
+        # User has active sessions - update tracking to match
+        if len(active_session_list) > 1:
+            logger.error(
+                f"⚠️ User {current_user.email} has {len(active_session_list)} "
+                f"active sessions! This should not happen."
+            )
+        
+        # Set to the first active session's workroom
+        current_user.current_live_session_workroom_id = active_session_list[0].workroom_id
+        await session.commit()
+        
+        return {
+            "message": "Active session found and tracking updated",
+            "active_session_count": len(active_session_list),
+            "current_workroom_id": str(active_session_list[0].workroom_id)
+        }
+        
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"❌ Error cleaning up stale sessions: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to cleanup stale sessions"
+        )
 
 # --------------------------------------------------------------------------------
 #  AI Analysis Endpoints

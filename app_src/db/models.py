@@ -155,6 +155,18 @@ class User(Base):
     find_us = Column(String, nullable=True)
     software_used = Column(ARRAY(String), nullable=True)
 
+    current_live_session_workroom_id = Column(
+        pg.UUID(as_uuid=True), 
+        ForeignKey(
+            "workrooms.id",
+            ondelete='SET NULL',
+            use_alter=True,
+            name='fk_user_current_live_session_workroom'
+        ),
+        nullable=True,
+        comment="Tracks the workroom where user currently has an active live session"
+    )
+
     external_connections = relationship(
         "ExternalServiceConnection", 
         back_populates="user",
@@ -175,6 +187,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         overlaps="workrooms"
+    )
+    current_live_session_workroom = relationship(
+        "Workroom",
+        foreign_keys=[current_live_session_workroom_id],
+        uselist=False
     )
     levels = relationship("UserLevel", back_populates="user", cascade="all, delete-orphan")
     task_collaborations_invited = relationship(
@@ -282,11 +299,11 @@ class WorkroomLiveSession(Base):
     
     id = Column(pg.UUID(as_uuid=True), default=uuid4, primary_key=True)
     workroom_id = Column(pg.UUID(as_uuid=True), ForeignKey("workrooms.id", ondelete='CASCADE'), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     ended_at = Column(DateTime(timezone=True), nullable=True)
     screen_sharer_id = Column(pg.UUID(as_uuid=True), ForeignKey("users.id", ondelete='SET NULL'), nullable=True)
     is_active = Column(Boolean, default=True)
-    start_time = Column(DateTime, default=datetime.utcnow)
+    is_ending = Column(Boolean, default=False, nullable=False)
+    start_time = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     
     workroom = relationship("Workroom", back_populates="live_sessions")
     screen_sharer = relationship("User")
@@ -321,6 +338,13 @@ class Workroom(Base):
     kpi_summary = relationship("WorkroomKPISummary", back_populates="workroom", cascade="all, delete-orphan")
     kpi_overall = relationship("WorkroomOverallKPI", back_populates="workroom", cascade="all, delete-orphan")
     performance_metrics = relationship("WorkroomPerformanceMetric", back_populates="workroom", cascade="all, delete-orphan")
+    
+    users_with_active_sessions = relationship(
+        "User",
+        foreign_keys="[User.current_live_session_workroom_id]",
+        back_populates="current_live_session_workroom",
+        uselist=True
+    )
     
 class Task(Base):
     __tablename__ = "tasks"

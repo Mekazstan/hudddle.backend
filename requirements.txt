@@ -2,8 +2,6 @@ asyncpg
 asgiref
 arq
 alembic
-celery
-celery[asyncio]
 groq
 google-auth
 google-auth-oauthlib
@@ -13,9 +11,6 @@ fastapi[standard]
 fastapi[websockets]
 itsdangerous
 httpx
-langsmith
-langchain
-langchain-groq
 paystack-sdk
 passlib
 bcrypt==3.2.2

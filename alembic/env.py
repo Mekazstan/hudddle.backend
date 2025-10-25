@@ -4,6 +4,14 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from app_src.db.models import Base
 from alembic import context
+from app_src.db.models import (
+    User, Workroom, WorkroomMemberLink, WorkroomLiveSession,
+    Task, TaskCollaborator, UserLevel, UserStreak, 
+    Leaderboard, FriendLink, FriendRequest, PasswordResetOTP,
+    Payment, Subscription, Achievement, WorkroomOverallKPI,
+    UserKPISummary, UserKPIMetricHistory, WorkroomKPISummary,
+    WorkroomKPIMetricHistory, ExternalServiceConnection, ImportedTask
+)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -25,6 +33,17 @@ target_metadata = Base.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
+def include_object(object, name, type_, reflected, compare_to):
+    """
+    Optional: Filter which objects to include in migrations.
+    Useful to exclude certain tables or schemas.
+    """
+    # Example: Exclude tables that start with '_'
+    if type_ == "table" and name.startswith("_"):
+        return False
+    
+    # Include everything else
+    return True
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -44,6 +63,9 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -65,7 +87,11 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, 
+            target_metadata=target_metadata,
+            compare_type=True,
+            compare_server_default=True,
+            include_object=include_object,
         )
 
         with context.begin_transaction():
