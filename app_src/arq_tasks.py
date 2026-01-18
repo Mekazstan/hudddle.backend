@@ -513,7 +513,7 @@ async def process_image_and_store_task(ctx, user_id, session_id, image_url, imag
                 logger.warning("Image analysis failed")
                 return
 
-            await store_analysis_result(analysis_result, image_filename)
+            await store_analysis_result(analysis_result, image_filename, user_id, session_id)
             await session.commit()
 
             await delete_cloudinary_object(image_filename)
