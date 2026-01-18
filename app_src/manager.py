@@ -24,6 +24,7 @@ class WebSocketManager:
         self.last_reset = datetime.utcnow()
         self.presence_data = defaultdict(dict)
         self.nosql = NoSQLClient()
+        self.active_sessions_data: Dict[str, Dict] = {} # user_id: session_data
         
     async def get_user_data(self, user_id: str, session: AsyncSession) -> Dict:
         """Get user data from cache or database"""
@@ -292,6 +293,16 @@ class WebSocketManager:
                 await self.handle_delete_message(data, workroom_id, user_id, session)
             elif message_type == 'user_typing':
                 await self.handle_typing_indicator(data, workroom_id, user_id, session)
+            elif message_type == 'session_start':
+                await self.handle_session_start(data, workroom_id, user_id, session)
+            elif message_type == 'session_end':
+                await self.handle_session_end(data, workroom_id, user_id, session)
+            elif message_type == 'task_start':
+                await self.handle_task_start(data, workroom_id, user_id, session)
+            elif message_type == 'task_complete':
+                await self.handle_task_complete(data, workroom_id, user_id, session)
+            elif message_type == 'status_change':
+                await self.handle_status_change(data, workroom_id, user_id, session)
             
     async def handle_edit_message(self, data: dict, workroom_id: str, user_id: str, session: AsyncSession):
         """Handle message editing"""
@@ -504,6 +515,86 @@ class WebSocketManager:
             'timestamp': datetime.utcnow().isoformat()
         })
         
+    async def handle_status_change(self, data: dict, workroom_id: str, user_id: str, session: AsyncSession):
+        """Handle user status changes"""
+        status = data.get('status', 'online')
+        async with self._presence_lock:
+            if workroom_id in self.presence_data and user_id in self.presence_data[workroom_id]:
+                self.presence_data[workroom_id][user_id]['status'] = status
+                self.presence_data[workroom_id][user_id]['last_active'] = datetime.utcnow()
+        
+        user_data = await self.get_user_data(user_id, session)
+        await self.broadcast(workroom_id, {
+            'type': 'user_status_change',
+            'userId': user_id,
+            'userName': user_data.get('username', 'Unknown'),
+            'status': status
+        })
+
+    async def handle_session_start(self, data: dict, workroom_id: str, user_id: str, session: AsyncSession):
+        """Handle session start notification"""
+        user_data = await self.get_user_data(user_id, session)
+        session_data = {
+            'userId': user_id,
+            'userName': user_data.get('username', 'Unknown'),
+            'sessionType': data.get('sessionType', 'work'),
+            'startTime': datetime.utcnow().isoformat()
+        }
+        self.active_sessions_data[user_id] = session_data
+        
+        await self.broadcast(workroom_id, {
+            'type': 'session_started',
+            **session_data
+        })
+
+    async def handle_session_end(self, data: dict, workroom_id: str, user_id: str, session: AsyncSession):
+        """Handle session end notification"""
+        user_data = await self.get_user_data(user_id, session)
+        session_data = self.active_sessions_data.pop(user_id, {})
+        
+        await self.broadcast(workroom_id, {
+            'type': 'session_ended',
+            'userId': user_id,
+            'userName': user_data.get('username', 'Unknown'),
+            'duration': data.get('duration', 'unknown'),
+            'endTime': datetime.utcnow().isoformat()
+        })
+
+    async def handle_task_start(self, data: dict, workroom_id: str, user_id: str, session: AsyncSession):
+        """Handle task start notification"""
+        user_data = await self.get_user_data(user_id, session)
+        await self.broadcast(workroom_id, {
+            'type': 'workroom_notification',
+            'notification_type': 'info',
+            'title': 'Task Started',
+            'message': f"{user_data.get('username', 'Someone')} started working on \"{data.get('taskTitle', 'a task')}\"",
+            'duration': 4000
+        })
+
+    async def handle_task_complete(self, data: dict, workroom_id: str, user_id: str, session: AsyncSession):
+        """Handle task completion notification"""
+        user_data = await self.get_user_data(user_id, session)
+        task_title = data.get('taskTitle', 'a task')
+        
+        await self.broadcast(workroom_id, {
+            'type': 'task_completed',
+            'userId': user_id,
+            'userName': user_data.get('username', 'Unknown'),
+            'taskTitle': task_title,
+            'completedAt': datetime.utcnow().isoformat()
+        })
+        
+        # Simulate task scoring (as in Node.js implementation)
+        import random
+        score = random.randint(60, 100)
+        await self.broadcast(workroom_id, {
+            'type': 'task_scored',
+            'userId': user_id,
+            'userName': user_data.get('username', 'Unknown'),
+            'taskTitle': task_title,
+            'score': score
+        })
+
     async def cleanup(self):
         """Clean up resources"""
         await self.nosql.client.close()
