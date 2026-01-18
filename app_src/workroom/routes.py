@@ -1189,53 +1189,27 @@ async def start_live_session(
                 detail="You are not a member of this workroom"
             )
         
-        # 3. Check if user already has an active session
+        # 3. Check if user already has an active session tracked on user model
         if current_user.current_live_session_workroom_id:
-            # Get the workroom name for better error message
-            active_workroom = await session.get(
-                Workroom, 
-                current_user.current_live_session_workroom_id
-            )
-            
-            if active_workroom:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "message": f"You currently have an active live session in '{active_workroom.name}'",
-                        "current_workroom_id": str(current_user.current_live_session_workroom_id),
-                        "current_workroom_name": active_workroom.name,
-                        "action": "Please end your current session before starting a new one"
-                    }
-                )
-            else:
-                # Workroom was deleted but user still has reference
-                # Clear the stale reference
-                current_user.current_live_session_workroom_id = None
-                await session.flush()
+            logger.info(f"User {current_user.id} has tracked session in {current_user.current_live_session_workroom_id}. Clearing for new session.")
+            current_user.current_live_session_workroom_id = None
+            await session.flush()
         
-        # 4. Check for any existing active sessions by this user (double-check)
+        # 4. End any existing active sessions by this user in the sessions table
         existing_active = await session.execute(
             select(WorkroomLiveSession).where(
                 WorkroomLiveSession.screen_sharer_id == current_user.id,
                 WorkroomLiveSession.is_active == True
             )
         )
-        existing_session = existing_active.scalar_one_or_none()
+        existing_sessions = existing_active.scalars().all()
         
-        if existing_session:
-            # Clean up inconsistent state
-            logger.warning(
-                f"User {current_user.id} had active session without tracking. "
-                f"Session: {existing_session.id}, Workroom: {existing_session.workroom_id}"
-            )
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "You have an existing active session",
-                    "session_id": str(existing_session.id),
-                    "workroom_id": str(existing_session.workroom_id)
-                }
-            )
+        for old_sess in existing_sessions:
+            logger.info(f"Cleaning up dangling session {old_sess.id} for user {current_user.id}")
+            old_sess.is_active = False
+            old_sess.ended_at = datetime.utcnow()
+        
+        await session.flush()
         
         # 5. Create new live session
         new_session = WorkroomLiveSession(
