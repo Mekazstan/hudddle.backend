@@ -284,6 +284,8 @@ class WebSocketManager:
             
             if message_type == 'chat_message':
                 await self.handle_chat_message(data, workroom_id, user_id, session)
+            elif message_type == 'dm_message':
+                await self.handle_dm_message(data, workroom_id, user_id, session)
             elif message_type == 'read_receipt':
                 await self.handle_read_receipt(data, workroom_id, user_id)
             elif message_type == 'load_history':
@@ -358,6 +360,92 @@ class WebSocketManager:
     def _validate_attachment(self, attachment: dict) -> bool:
         required_fields = {'name', 'type', 'url'}
         return all(field in attachment for field in required_fields)
+    
+    async def handle_dm_message(self, data: dict, workroom_id: str, sender_id: str, session: AsyncSession):
+        """Handle direct messages between users"""
+        recipient_id = data.get('recipient_id')
+        content = data.get('content', '').strip()
+        
+        if not recipient_id:
+            async with self._connections_lock:
+                ws = self.active_connections[workroom_id].get(sender_id)
+            if ws:
+                await self.safe_send(ws, {
+                    'type': 'error',
+                    'message': 'Recipient ID is required for DM'
+                })
+            return
+        
+        if not content:
+            async with self._connections_lock:
+                ws = self.active_connections[workroom_id].get(sender_id)
+            if ws:
+                await self.safe_send(ws, {
+                    'type': 'error',
+                    'message': 'Message cannot be empty'
+                })
+            return
+        
+        if len(content) > 2000:
+            async with self._connections_lock:
+                ws = self.active_connections[workroom_id].get(sender_id)
+            if ws:
+                await self.safe_send(ws, {
+                    'type': 'error',
+                    'message': 'Message too long (max 2000 characters)'
+                })
+            return
+        
+        try:
+            # Verify recipient is in the same workroom
+            async with self._connections_lock:
+                recipient_ws = self.active_connections[workroom_id].get(recipient_id)
+            
+            if not recipient_ws:
+                async with self._connections_lock:
+                    sender_ws = self.active_connections[workroom_id].get(sender_id)
+                if sender_ws:
+                    await self.safe_send(sender_ws, {
+                        'type': 'error',
+                        'message': 'Recipient is not online in this workroom'
+                    })
+                return
+            
+            # Get sender data
+            sender_data = await self.get_user_data(sender_id, session)
+            
+            # Create DM message
+            message_id = str(uuid.uuid4())
+            dm_message = {
+                'type': 'dm_message',
+                'id': message_id,
+                'sender': sender_data,
+                'content': content,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            # Send to recipient
+            await self.safe_send(recipient_ws, dm_message)
+            
+            # Send delivery confirmation to sender
+            async with self._connections_lock:
+                sender_ws = self.active_connections[workroom_id].get(sender_id)
+            if sender_ws:
+                await self.safe_send(sender_ws, {
+                    'type': 'dm_delivered',
+                    'message_id': message_id,
+                    'recipient_id': recipient_id,
+                    'timestamp': datetime.utcnow().isoformat()
+                })
+                
+        except Exception as e:
+            async with self._connections_lock:
+                ws = self.active_connections[workroom_id].get(sender_id)
+            if ws:
+                await self.safe_send(ws, {
+                    'type': 'error',
+                    'message': f'Failed to send DM: {str(e)}'
+                })
     
     async def handle_chat_message(self, data: dict, workroom_id: str, sender_id: str, session: AsyncSession):
         """Handle chat messages with NoSQL storage"""
