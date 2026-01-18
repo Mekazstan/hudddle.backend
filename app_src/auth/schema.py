@@ -27,6 +27,7 @@ class UserSchema(BaseModel):
     daily_active_minutes: int
     teamwork_collaborations: int
     software_used: Optional[List[str]] = None
+    current_live_session_workroom_id: Optional[UUID] = None
 
     class Config:
         from_attributes = True

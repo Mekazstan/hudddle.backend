@@ -16,7 +16,7 @@ from uuid import UUID
 from app_src.db.models import (Leaderboard, LevelCategory, UserKPIMetricHistory, UserKPISummary, Workroom, User, 
                                Task, TaskStatus, WorkroomKPIMetricHistory, WorkroomKPISummary, WorkroomLiveSession, 
                        WorkroomMemberLink, WorkroomPerformanceMetric)
-from app_src.auth.dependencies import get_current_user
+from app_src.auth.dependencies import get_current_user, get_current_user_model
 from app_src.tasks.schema import TaskSchema
 from datetime import datetime, timezone, date
 from app_src.config import Config
@@ -1162,7 +1162,7 @@ async def create_task_in_workroom(
 async def start_live_session(
     workroom_id: UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_model),
 ):
     """
     Start a new live session in a workroom.
@@ -1295,7 +1295,7 @@ async def end_live_session(
     workroom_id: UUID,
     session_id: UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_model),
     redis: ArqRedis = Depends(get_redis_pool)
 ):
     """
