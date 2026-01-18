@@ -792,7 +792,8 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
     user_summary = user_summary_result.scalar_one_or_none()
 
     if not user_summary:
-        raise HTTPException(status_code=404, detail="No KPI summary found for current user today")
+        logging.warning(f"No KPI summary found for user {user_id} today. Skipping overview calculation.")
+        return
     
     # Get all user summaries for today (only for alignment calculation)
     summaries_result = await session.execute(
@@ -804,7 +805,8 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
     summaries = summaries_result.scalars().all()
 
     if not summaries:
-        raise HTTPException(status_code=404, detail="No KPI summaries found for today")
+        logging.warning(f"No KPI summaries found for today in workroom {workroom_id}. Skipping overview calculation.")
+        return
 
     # Calculate averages
     total_alignment = sum(s.overall_alignment_percentage for s in summaries)
