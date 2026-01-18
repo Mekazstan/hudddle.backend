@@ -21,6 +21,7 @@ services:
       MAIL_PORT: ${MAIL_PORT}
       MAIL_SERVER: ${MAIL_SERVER}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME}
+      RESEND_API_KEY: ${RESEND_API_KEY}
       MAIL_STARTTLS: True
       MAIL_SSL_TLS: False
       USE_CREDENTIALS: True
@@ -67,6 +68,7 @@ services:
       MAIL_PORT: ${MAIL_PORT}
       MAIL_SERVER: ${MAIL_SERVER}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME}
+      RESEND_API_KEY: ${RESEND_API_KEY}
       MAIL_STARTTLS: True
       MAIL_SSL_TLS: False
       USE_CREDENTIALS: True

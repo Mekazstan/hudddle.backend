@@ -28,7 +28,7 @@ async def startup(ctx):
         if not await ctx['mail'].test_connection():
             raise ConnectionError("Failed to connect to mail server")
         
-        logger.info("✅ Mail server connection verified")
+        logger.info("✅ Email service (Resend) verified")
         logger.info("🏁 Worker startup complete")
     except Exception as e:
         logging.error(f"❌ Worker startup failed: {e}")

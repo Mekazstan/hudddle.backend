@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # LANGSMITH_TRACING: str = "true"
     # LANGSMITH_PROJECT: str = "hudddle-xyz"
     # LANGSMITH_ENDPOINT: str = "https://api.langsmith.com"
+    RESEND_API_KEY: str
     PAYSTACK_SECRET_KEY: str
     PAYSTACK_PUBLIC_KEY: str
     PAYSTACK_WEBHOOK_SECRET: str

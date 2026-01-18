@@ -2,11 +2,13 @@ asyncpg
 asgiref
 arq
 alembic
+cachetools
 groq
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 fastapi-mail
+resend
 fastapi[standard]
 fastapi[websockets]
 itsdangerous

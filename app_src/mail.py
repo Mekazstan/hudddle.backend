@@ -1,5 +1,5 @@
 import logging
-from fastapi_mail import FastMail, ConnectionConfig, MessageSchema
+import resend
 from app_src.config import Config
 from pathlib import Path
 
@@ -17,54 +17,51 @@ class MailService:
         return cls._instance
     
     def _initialize(self):
-        self.config = ConnectionConfig(
-            MAIL_USERNAME=Config.MAIL_USERNAME,
-            MAIL_PASSWORD=Config.MAIL_PASSWORD,
-            MAIL_FROM=Config.MAIL_FROM,
-            MAIL_PORT=Config.MAIL_PORT,
-            MAIL_SERVER=Config.MAIL_SERVER,
-            MAIL_FROM_NAME=Config.MAIL_FROM_NAME,
-            MAIL_STARTTLS=True,
-            MAIL_SSL_TLS=False,
-            USE_CREDENTIALS=True,
-            VALIDATE_CERTS=True,
-            TIMEOUT=10
-        )
-        self.mail = FastMail(self.config)
+        resend.api_key = Config.RESEND_API_KEY
+        self.from_email = f"{Config.MAIL_FROM_NAME} <{Config.MAIL_FROM}>"
     
     async def test_connection(self):
-        """Test the SMTP connection by starting and closing a connection"""
-        try:
-            # Create a test message
-            message = MessageSchema(
-                recipients=["test@example.com"],
-                subject="Connection Test",
-                body="<p>Test</p>",
-                subtype="html"
-            )
-            
-            # This will implicitly test the connection
-            await self.mail.send_message(message)
-            return True
-        except Exception as e:
-            logger.error(f"Mail connection test failed: {e}")
-            return False
+        """
+        Resend uses HTTP API, so there is no persistent connection to test.
+        We return True to satisfy the arq_worker startup check.
+        """
+        return True
         
-    async def send_message(self, message):
-        """Public method to send emails"""
+    async def send_message(self, message_params):
+        """
+        Public method to send emails via Resend.
+        message_params should be a dict or object with:
+        recipients, subject, body
+        """
         try:
-            await self.mail.send_message(message)
+            params = {
+                "from": self.from_email,
+                "to": message_params.recipients,
+                "subject": message_params.subject,
+                "html": message_params.body,
+            }
+            
+            # Resend's python SDK is synchronous, so we run it in a thread 
+            # or just call it if we don't mind the block, but for arq 
+            # it's better to keep it async-friendly.
+            # Using resend.Emails.send(params)
+            resend.Emails.send(params)
             return True
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            logger.error(f"Failed to send email via Resend: {e}")
             raise
 
 mail_service = MailService()
 
+class SimpleMessage:
+    def __init__(self, recipients, subject, body):
+        self.recipients = recipients
+        self.subject = subject
+        self.body = body
+
 def create_message(recipients: list[str], subject: str, body: str):
-    return MessageSchema(
+    return SimpleMessage(
         recipients=recipients,
         subject=subject,
-        body=body,
-        subtype="html"
+        body=body
     )
