@@ -2,6 +2,7 @@ from collections import defaultdict
 import json
 import logging
 import re
+import io
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -469,8 +470,11 @@ async def store_analysis_result(analysis_text: str, original_image_filename: str
         cloudinary_public_id = f"hudddleBackend/user_{user_id}/session_{session_id}/analysis_{file_name_without_ext}"
 
         # Upload the analysis text as a raw file to Cloudinary
+        # Convert text to bytes stream so Cloudinary doesn't treat it as a file path
+        file_stream = io.BytesIO(analysis_text.encode('utf-8'))
+        
         result = cloudinary.uploader.upload(
-            analysis_text,
+            file_stream,
             public_id=cloudinary_public_id,
             resource_type="raw",
             format="txt"
@@ -505,6 +509,16 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
     workroom = result.scalar_one_or_none()
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
+
+
+    # Create fallback response earlier so it can be used for early returns
+    fallback_response = UserDailyKPIReport(
+        summary_text="No analysis found",
+        kpi_breakdown=[
+            {"kpi_name": pm.kpi_name, "percentage": 0.0}
+            for pm in workroom.performance_metrics
+        ]
+    )
 
     # Get all screenshots for this session
     screenshots, _ = await get_user_session_screenshots(user_id, session_id)
@@ -556,14 +570,7 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         for pm in workroom.performance_metrics
     ]
     
-    # Create fallback response
-    fallback_response = UserDailyKPIReport(
-        summary_text="No analysis found",
-        kpi_breakdown=[
-            {"kpi_name": pm.kpi_name, "percentage": 0.0}
-            for pm in workroom.performance_metrics
-        ]
-    )
+
     
     try:
         # Create the prompt content
