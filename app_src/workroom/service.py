@@ -11,6 +11,7 @@ from app_src.db.models import (TaskStatus, UserKPIMetricHistory, UserKPISummary,
                        Task, WorkroomKPIMetricHistory, WorkroomKPISummary, 
                        WorkroomLiveSession, WorkroomOverallKPI, User)
 import cloudinary
+import cloudinary.uploader
 import cloudinary.api
 import time
 from app_src.config import Config
@@ -505,10 +506,20 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
     if not workroom:
         raise HTTPException(status_code=404, detail="Workroom not found")
 
+    # Get all screenshots for this session
+    screenshots, _ = await get_user_session_screenshots(user_id, session_id)
+    
     # Get user activity results
     all_activities = await get_all_analysis_results(user_id, session_id)
-    if not all_activities:
-        raise HTTPException(status_code=404, detail="No analysis results found")
+    
+    if screenshots and not all_activities:
+        # Screenshots exist but no analysis yet, likely still processing
+        raise HTTPException(status_code=404, detail=f"Analysis in progress for {len(screenshots)} screenshots...")
+        
+    if not screenshots and not all_activities:
+        # Truly no data for this session
+        logging.info(f"No data found for session {session_id}, skipping summary")
+        return fallback_response
 
     # Get recently completed tasks (last 6 hours) assigned to this user
     six_hours_ago = datetime.utcnow() - timedelta(hours=6)

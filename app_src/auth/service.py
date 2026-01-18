@@ -10,6 +10,8 @@ import logging
 from app_src.config import Config
 from datetime import datetime
 import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 from sqlalchemy.exc import IntegrityError
 
 class UserService:

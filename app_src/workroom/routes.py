@@ -22,6 +22,7 @@ from datetime import datetime, timezone, date
 from app_src.config import Config
 import cloudinary
 import cloudinary.uploader
+import cloudinary.api
 from arq.connections import ArqRedis
 
 
