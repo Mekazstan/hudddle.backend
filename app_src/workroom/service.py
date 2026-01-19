@@ -61,9 +61,16 @@ async def get_all_analysis_results(user_id: UUID, session_id: UUID) -> List[str]
 
     try:
         # Search for analysis text files in user's session folder
-        result = cloudinary.Search()\
-            .expression(f"folder:{folder_path} AND filename:analysis_* AND resource_type:raw")\
-            .execute()
+        # Use Admin API for immediate consistency (Search API has latency)
+        # prefix matches the folder path
+        result = cloudinary.api.resources(
+            type="upload",
+            prefix=folder_path, 
+            resource_type="raw",
+            max_results=500
+        )
+        
+        logging.info(f"Analysis fetch for {folder_path} found {len(result.get('resources', []))} files")
 
         for resource in result.get('resources', []):
             public_id = resource['public_id']
@@ -1078,9 +1085,15 @@ async def get_user_session_screenshots(user_id: UUID, session_id: UUID) -> tuple
         folder_path = f"hudddleBackend/user_{user_id}/session_{session_id}"
         
         # Search for screenshot images only (not analysis files)
-        result = cloudinary.Search()\
-            .expression(f"folder:{folder_path} AND filename:screenshot_* AND resource_type:image")\
-            .execute()
+        # Use Admin API for immediate consistency
+        result = cloudinary.api.resources(
+            type="upload",
+            prefix=folder_path,
+            resource_type="image", 
+            max_results=500
+        )
+        
+        logging.info(f"Screenshots fetch for {folder_path} found {len(result.get('resources', []))} images")
         
         image_urls = []
         public_ids = []
