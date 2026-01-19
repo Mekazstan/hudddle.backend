@@ -304,7 +304,11 @@ async def update_workroom_leaderboard(workroom_id: UUID, session: AsyncSession):
             logging.error(f"Error updating leaderboard for user {entry.get('user_id', 'unknown')}: {str(e)}")
             continue
 
+
     logging.info(f"Updated leaderboard for workroom {workroom_id} with {len(leaderboard_data)} entries")
+    # Log top 3 for verification
+    for i, entry in enumerate(leaderboard_data[:3]):
+        logging.info(f"Leaderboard Rank {i+1}: {entry['username']} - Score: {entry['score']}")
 
 
 # --------------------------------------------------------------------------------
@@ -530,10 +534,14 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         # Screenshots exist but no analysis yet, likely still processing
         raise HTTPException(status_code=404, detail=f"Analysis in progress for {len(screenshots)} screenshots...")
         
+    summary_data = None
+    
     if not screenshots and not all_activities:
         # Truly no data for this session
-        logging.info(f"No data found for session {session_id}, skipping summary")
-        return fallback_response
+        logging.info(f"No data found for session {session_id}, using fallback summary")
+        summary_data = fallback_response
+    
+    if not summary_data:
 
     # Get recently completed tasks (last 6 hours) assigned to this user
     six_hours_ago = datetime.utcnow() - timedelta(hours=6)
@@ -577,6 +585,9 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         kpi_metrics_json = json.dumps(kpi_metrics, indent=2)
         all_activities_json = json.dumps(all_activities, indent=2)
         recent_tasks_json = json.dumps(recent_tasks_info, indent=2)
+
+        logging.info(f"Generating summary for User: {user.first_name}, Workroom: {workroom.name}")
+        logging.info(f"Input Data - Activities: {len(all_activities)} items, Tasks: {len(recent_completed_tasks)} items")
         
         user_content = f"""
         Team Member: {user.first_name} {user.last_name}
@@ -758,6 +769,9 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         ))
 
     await db.commit()
+    await db.commit()
+    logging.info(f"Saved User KPI Summary for {user.first_name}: Alignment={overall_alignment:.2f}%")
+    logging.info(f"Summary Text Preview: {summary_data.summary_text[:100]}...")
     return summary_data
 
 #   --------------------------------------------------------------------------------
@@ -840,6 +854,8 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         # Create the prompt content
         kpi_breakdown_json = json.dumps(averaged_kpi_breakdown, indent=2)
         
+        logging.info(f"Generating Workroom Overview for {workroom.name}. Average Alignment: {average_alignment:.2f}%")
+        
         user_content = f"""
         Below are the relevant summaries from today:
 
@@ -850,6 +866,7 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
 
         Key Metrics:
         - Overall Alignment: {round(average_alignment, 2)}%
+
         - KPI Breakdown: {kpi_breakdown_json}
 
         Generate a structured executive summary formatted for frontend display with the following structure:
