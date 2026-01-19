@@ -542,165 +542,162 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
         summary_data = fallback_response
     
     if not summary_data:
-
-    # Get recently completed tasks (last 6 hours) assigned to this user
-    six_hours_ago = datetime.utcnow() - timedelta(hours=6)
-    recent_tasks_result = await db.execute(
-        select(Task).where(
-            Task.workroom_id == workroom_id,
-            Task.assigned_users.contains(user),
-            Task.status == TaskStatus.COMPLETED,
-            Task.completed_at >= six_hours_ago,
-            Task.completed_at.isnot(None)
-        ).order_by(Task.completed_at.desc())
-    )
-    recent_completed_tasks = recent_tasks_result.scalars().all()
-    
-    # Prepare task information for the prompt
-    recent_tasks_info = []
-    for task in recent_completed_tasks:
-        task_info = {
-            "title": task.title,
-            "kpi_link": task.kpi_link,
-            "task_tools": task.task_tools or [],
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "task_points": task.task_point
-        }
-        recent_tasks_info.append(task_info)
-
-    # Prepare KPI metrics with weights
-    kpi_metrics = [
-        {
-            "name": pm.kpi_name,
-            "weight": pm.weight,
-            "description": f"Importance: {pm.weight}/10"
-        } 
-        for pm in workroom.performance_metrics
-    ]
-    
-
-    
-    try:
-        # Create the prompt content
-        kpi_metrics_json = json.dumps(kpi_metrics, indent=2)
-        all_activities_json = json.dumps(all_activities, indent=2)
-        recent_tasks_json = json.dumps(recent_tasks_info, indent=2)
-
-        logging.info(f"Generating summary for User: {user.first_name}, Workroom: {workroom.name}")
-        logging.info(f"Input Data - Activities: {len(all_activities)} items, Tasks: {len(recent_completed_tasks)} items")
-        
-        user_content = f"""
-        Team Member: {user.first_name} {user.last_name}
-        Workroom: {workroom.name}
-        Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
-
-        Below are the performance metrics for this workroom with their importance weights:
-        {kpi_metrics_json}
-
-        Here are the detected activities from {user.first_name}'s session:
-        {all_activities_json}
-
-        Here are the tasks {user.first_name} completed in the last 6 hours within this workroom:
-        {recent_tasks_json}
-
-        Your analysis task:
-        1. Evaluate {user.first_name}'s performance by analyzing:
-        - How well their detected activities align with the specified KPIs
-        - Whether they used the tools specified in their completed tasks (task_tools)
-        - The correlation between their activities and the tasks they completed
-        - Quality of work based on KPI alignment and task completion patterns
-        
-        2. Write a structured summary with the following format for frontend display:
-        - Start with "**Insights**" as a header
-        - Use bullet points (•) for key insights
-        - Include a "**Recommendations**" section with actionable suggestions
-        - Keep insights concise and specific to observed activities and KPI alignment
-        - Format for easy reading with proper spacing and structure
-        
-        3. For each KPI, provide an alignment percentage (0-100) considering:
-        - Time spent on KPI-related activities
-        - Usage of tools specified in completed tasks
-        - Quality of engagement with task-related work
-        - Weight/importance of each KPI
-        - Evidence from both activities and completed task patterns
-
-        Return a JSON object with this exact structure:
-        {{
-            "summary_text": "**Insights**\n\n• [Specific insight about KPI alignment and activity patterns]\n• [Evidence of tool usage and task completion effectiveness]\n• [Quality assessment based on observed behaviors]\n• [Performance consistency or notable patterns]\n\n**Recommendations**\n\n• [Specific actionable recommendation based on analysis]\n• [Suggestion for improving KPI alignment or workflow]\n• [Tool usage or collaboration improvements if applicable]",
-            "kpi_breakdown": [
-                {{
-                    "kpi_name": "KPI Name",
-                    "percentage": 85.0
-                }},
-                ...
-            ]
-        }}
-
-        Important:
-        - Format summary_text for direct frontend rendering with proper markdown
-        - Use bullet points (•) not dashes (-)
-        - Include clear section headers with **bold** formatting
-        - Keep insights data-driven and specific to observed activities
-        - Base analysis on both screen activities AND completed tasks with their tools
-        - Reward alignment between task tools and detected activities
-        - Consider task completion timing and KPI relevance
-        - Only return valid JSON with properly escaped formatting
-        - Include all KPIs in the breakdown
-        - Percentages should be floats
-        """
-        
-        # Use Groq client directly
-        completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an AI performance analyst evaluating a team member's work session. Respond like you are accesssing and advising the team member"
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            temperature=0.3,
-            max_completion_tokens=800,
-            top_p=1,
-            stream=False,
-            stop=None
+        # Get recently completed tasks (last 6 hours) assigned to this user
+        six_hours_ago = datetime.utcnow() - timedelta(hours=6)
+        recent_tasks_result = await db.execute(
+            select(Task).where(
+                Task.workroom_id == workroom_id,
+                Task.assigned_users.contains(user),
+                Task.status == TaskStatus.COMPLETED,
+                Task.completed_at >= six_hours_ago,
+                Task.completed_at.isnot(None)
+            ).order_by(Task.completed_at.desc())
         )
+        recent_completed_tasks = recent_tasks_result.scalars().all()
         
-        # Parse JSON response
-        response_text = completion.choices[0].message.content.strip()
+        # Prepare task information for the prompt
+        recent_tasks_info = []
+        for task in recent_completed_tasks:
+            task_info = {
+                "title": task.title,
+                "kpi_link": task.kpi_link,
+                "task_tools": task.task_tools or [],
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                "task_points": task.task_point
+            }
+            recent_tasks_info.append(task_info)
+
+        # Prepare KPI metrics with weights
+        kpi_metrics = [
+            {
+                "name": pm.kpi_name,
+                "weight": pm.weight,
+                "description": f"Importance: {pm.weight}/10"
+            } 
+            for pm in workroom.performance_metrics
+        ]
         
-        # Try to extract JSON from the response
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            try:
-                parsed_data = json.loads(json_str)
-                
-                # Create UserDailyKPIReport from parsed data
-                if "summary_text" in parsed_data and "kpi_breakdown" in parsed_data:
-                    kpi_breakdown = [
-                        {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
-                        for item in parsed_data["kpi_breakdown"]
-                    ]
-                    summary_data = UserDailyKPIReport(
-                        summary_text=parsed_data["summary_text"],
-                        kpi_breakdown=kpi_breakdown
-                    )
-                else:
-                    raise ValueError("Missing required fields in LLM response")
-            except (json.JSONDecodeError, ValueError, KeyError) as parse_error:
-                logging.warning(f"Failed to parse LLM JSON response: {parse_error}. Raw response: {response_text}")
-                summary_data = fallback_response
-        else:
-            logging.warning(f"No JSON found in LLM response: {response_text}")
-            summary_data = fallback_response
+        try:
+            # Create the prompt content
+            kpi_metrics_json = json.dumps(kpi_metrics, indent=2)
+            all_activities_json = json.dumps(all_activities, indent=2)
+            recent_tasks_json = json.dumps(recent_tasks_info, indent=2)
+
+            logging.info(f"Generating summary for User: {user.first_name}, Workroom: {workroom.name}")
+            logging.info(f"Input Data - Activities: {len(all_activities)} items, Tasks: {len(recent_completed_tasks)} items")
             
-    except Exception as e:
-        logging.warning(f"LLM call failed: {str(e)}")
-        summary_data = fallback_response
+            user_content = f"""
+            Team Member: {user.first_name} {user.last_name}
+            Workroom: {workroom.name}
+            Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
+
+            Below are the performance metrics for this workroom with their importance weights:
+            {kpi_metrics_json}
+
+            Here are the detected activities from {user.first_name}'s session:
+            {all_activities_json}
+
+            Here are the tasks {user.first_name} completed in the last 6 hours within this workroom:
+            {recent_tasks_json}
+
+            Your analysis task:
+            1. Evaluate {user.first_name}'s performance by analyzing:
+            - How well their detected activities align with the specified KPIs
+            - Whether they used the tools specified in their completed tasks (task_tools)
+            - The correlation between their activities and the tasks they completed
+            - Quality of work based on KPI alignment and task completion patterns
+            
+            2. Write a structured summary with the following format for frontend display:
+            - Start with "**Insights**" as a header
+            - Use bullet points (•) for key insights
+            - Include a "**Recommendations**" section with actionable suggestions
+            - Keep insights concise and specific to observed activities and KPI alignment
+            - Format for easy reading with proper spacing and structure
+            
+            3. For each KPI, provide an alignment percentage (0-100) considering:
+            - Time spent on KPI-related activities
+            - Usage of tools specified in completed tasks
+            - Quality of engagement with task-related work
+            - Weight/importance of each KPI
+            - Evidence from both activities and completed task patterns
+
+            Return a JSON object with this exact structure:
+            {{
+                "summary_text": "**Insights**\\n\\n• [Specific insight about KPI alignment and activity patterns]\\n• [Evidence of tool usage and task completion effectiveness]\\n• [Quality assessment based on observed behaviors]\\n• [Performance consistency or notable patterns]\\n\\n**Recommendations**\\n\\n• [Specific actionable recommendation based on analysis]\\n• [Suggestion for improving KPI alignment or workflow]\\n• [Tool usage or collaboration improvements if applicable]",
+                "kpi_breakdown": [
+                    {{
+                        "kpi_name": "KPI Name",
+                        "percentage": 85.0
+                    }},
+                    ...
+                ]
+            }}
+
+            Important:
+            - Format summary_text for direct frontend rendering with proper markdown
+            - Use bullet points (•) not dashes (-)
+            - Include clear section headers with **bold** formatting
+            - Keep insights data-driven and specific to observed activities
+            - Base analysis on both screen activities AND completed tasks with their tools
+            - Reward alignment between task tools and detected activities
+            - Consider task completion timing and KPI relevance
+            - Only return valid JSON with properly escaped formatting
+            - Include all KPIs in the breakdown
+            - Percentages should be floats
+            """
+            
+            # Use Groq client directly
+            completion = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an AI performance analyst evaluating a team member's work session. Respond like you are accesssing and advising the team member"
+                    },
+                    {
+                        "role": "user",
+                        "content": user_content
+                    }
+                ],
+                temperature=0.3,
+                max_completion_tokens=800,
+                top_p=1,
+                stream=False,
+                stop=None
+            )
+            
+            # Parse JSON response
+            response_text = completion.choices[0].message.content.strip()
+            
+            # Try to extract JSON from the response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                try:
+                    parsed_data = json.loads(json_str)
+                    
+                    # Create UserDailyKPIReport from parsed data
+                    if "summary_text" in parsed_data and "kpi_breakdown" in parsed_data:
+                        kpi_breakdown = [
+                            {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
+                            for item in parsed_data["kpi_breakdown"]
+                        ]
+                        summary_data = UserDailyKPIReport(
+                            summary_text=parsed_data["summary_text"],
+                            kpi_breakdown=kpi_breakdown
+                        )
+                    else:
+                        raise ValueError("Missing required fields in LLM response")
+                except (json.JSONDecodeError, ValueError, KeyError) as parse_error:
+                    logging.warning(f"Failed to parse LLM JSON response: {parse_error}. Raw response: {response_text}")
+                    summary_data = fallback_response
+            else:
+                logging.warning(f"No JSON found in LLM response: {response_text}")
+                summary_data = fallback_response
+                
+        except Exception as e:
+            logging.warning(f"LLM call failed: {str(e)}")
+            summary_data = fallback_response
             
     # Calculate overall alignment percentage (weighted average)
     total_weight = sum(pm.weight for pm in workroom.performance_metrics)
