@@ -154,9 +154,9 @@ async def sign_in_google(
         google_user_info = await verify_google_token(google_data.google_token)
         google_email = google_user_info["email"]
         google_name = google_user_info.get("name", "Google User")
-        firstname = google_user_info("given_name", '')
-        lastname = google_user_info("family_name", '')
-        user_image = google_user_info("picture", '')
+        firstname = google_user_info.get("given_name", '')
+        lastname = google_user_info.get("family_name", '')
+        user_image = google_user_info.get("picture", '')
         
         existing_user = await user_service.get_user_by_email(google_email, session)
         
@@ -164,7 +164,7 @@ async def sign_in_google(
             new_user_data = {
                 "email": google_email,
                 "username": google_name,
-                "hashed_password": None,
+                "password_hash": None,
                 "is_verified": True,
                 "auth_provider": "google",
                 "first_name": firstname,

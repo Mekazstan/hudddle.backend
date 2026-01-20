@@ -195,7 +195,7 @@ class WebSocketManager:
                 return
             
             for user_id, ws in list(self.active_connections[workroom_id].items()):
-                if user_id in exclude:
+                if exclude and user_id in exclude:
                     continue
                 try:
                     if ws.client_state == WebSocketState.CONNECTED:

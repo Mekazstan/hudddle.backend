@@ -3,12 +3,12 @@ asgiref
 arq
 alembic
 cachetools
-groq
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 fastapi-mail
 resend
+google-generativeai
 fastapi[standard]
 fastapi[websockets]
 itsdangerous

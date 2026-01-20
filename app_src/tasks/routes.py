@@ -2,9 +2,9 @@ import json
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from app_src.achievements.service import update_user_level
 from app_src.db.db_connect import get_session
@@ -16,6 +16,46 @@ from app_src.auth.dependencies import get_current_user
 task_router = APIRouter()
 
 # Task Endpoints
+
+@task_router.get("", response_model=List[TaskSchema])
+async def get_tasks(
+    workroom_id: Optional[UUID] = None,
+    personal: bool = False,
+    session: AsyncSession = Depends(get_session), 
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get tasks for the current user.
+    - If personal=True and workroom_id is provided: returns BOTH.
+    - If personal=True: returns tasks with no workroom created by the user.
+    - If workroom_id is provided: returns tasks in that workroom assigned to the user.
+    - Default: returns all tasks created by the user.
+    """
+    if workroom_id and personal:
+        # Combined: workroom assigned tasks OR personal tasks
+        query = select(Task).where(
+            or_(
+                (Task.workroom_id == workroom_id) & (Task.assigned_users.any(User.id == current_user.id)),
+                (Task.workroom_id == None) & (Task.created_by_id == current_user.id)
+            )
+        )
+    elif personal:
+        # Personal tasks only
+        query = select(Task).where(
+            (Task.workroom_id == None) & (Task.created_by_id == current_user.id)
+        )
+    elif workroom_id:
+        # Workroom tasks only
+        query = select(Task).join(Task.assigned_users).where(
+            (Task.workroom_id == workroom_id) & (User.id == current_user.id)
+        )
+    else:
+        # Default: everything created by me (existing behavior)
+        query = select(Task).where(Task.created_by_id == current_user.id)
+        
+    result = await session.execute(query)
+    tasks = result.scalars().all()
+    return tasks
 
 @task_router.post("/{task_id}/invite-friend/{friend_id}", status_code=status.HTTP_201_CREATED)
 async def invite_friend_to_task(
@@ -134,8 +174,36 @@ async def accept_task_invite(
     }
 
 @task_router.get("", response_model=List[TaskSchema])
-async def get_tasks(session: AsyncSession = Depends(get_session), current_user: User = Depends(get_current_user)):
-    result = await session.execute(select(Task).where(Task.created_by_id == current_user.id))
+async def get_tasks(
+    workroom_id: Optional[UUID] = None,
+    personal: bool = False,
+    session: AsyncSession = Depends(get_session), 
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get tasks for the current user.
+    - If personal=True: returns tasks with no workroom created by the user.
+    - If workroom_id is provided: returns tasks in that workroom assigned to the user.
+    - Default: returns all tasks created by the user.
+    """
+    if personal:
+        # Personal tasks: no workroom, created by current user
+        query = select(Task).where(
+            (Task.workroom_id == None) & 
+            (Task.created_by_id == current_user.id)
+        )
+    elif workroom_id:
+        # Workroom tasks: specific workroom, assigned to current user
+        # We join with assigned_users to filter by assignment
+        query = select(Task).join(Task.assigned_users).where(
+            (Task.workroom_id == workroom_id) & 
+            (User.id == current_user.id)
+        )
+    else:
+        # Default behavior: tasks created by the user
+        query = select(Task).where(Task.created_by_id == current_user.id)
+        
+    result = await session.execute(query)
     tasks = result.scalars().all()
     return tasks
 

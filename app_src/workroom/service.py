@@ -2,6 +2,7 @@ from collections import defaultdict
 import json
 import logging
 import re
+import requests
 import io
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -16,16 +17,19 @@ import cloudinary.uploader
 import cloudinary.api
 import time
 from app_src.config import Config
-from typing import List
-from groq import Groq
+import google.generativeai as genai
 from datetime import datetime, timezone, timedelta
 from .schema import UserDailyKPIReport
 
 
-GROQ_API_KEY = Config.GROQ_API_KEY
-if not GROQ_API_KEY:
-    logging.error("GROQ_API_KEY is not set in the environment variables.")
-groq_client = Groq(api_key=GROQ_API_KEY)
+GEMINI_API_KEY = Config.GEMINI_API_KEY
+if not GEMINI_API_KEY:
+    logging.error("GEMINI_API_KEY is not set in the environment variables.")
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Use Gemini 1.5 models
+vision_model = genai.GenerativeModel('gemini-1.5-flash')
+summary_model = genai.GenerativeModel('gemini-1.5-pro')
 
 # Cloudinary Configuration
 cloudinary.config(
@@ -80,7 +84,7 @@ async def get_all_analysis_results(user_id: UUID, session_id: UUID) -> List[str]
                 secure_url = resource['secure_url']
                 
                 # Download the content
-                import requests
+    
                 response = requests.get(secure_url)
                 if response.status_code == 200:
                     content = response.text.strip()
@@ -355,8 +359,7 @@ def validate_image_url(image_url: str) -> bool:
 
 async def analyze_image(image_url: str, kpi_names: set) -> str:
     """
-    Analyzes the image using Groq API and returns a plain text description.
-    Focuses on identifying activities related to specific performance metrics.
+    Analyzes the image using Gemini Vision API and returns a plain text description.
     """
     try:
         if not kpi_names:
@@ -364,66 +367,62 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
             
         kpi_list = ", ".join(kpi_names)
         
-        # Validate image URL before sending to Groq
+        # Validate image URL
         if not validate_image_url(image_url):
             logging.error(f"Invalid or inaccessible image URL: {image_url}")
             return "[Image analysis skipped: Invalid or inaccessible image URL]"
-        
-        # Create message content with image
-        message_content = [
-            {
-                "type": "text", 
-                "text": (
-                    "Analyze this screenshot of a user's work session. Focus on identifying activities that relate "
-                    f"to these specific performance metrics: {kpi_list}. "
-                    "Describe what applications/tools are visible and how they're being used. "
-                    "Note any signs of productive work, collaboration, or distractions. "
-                    "For example, if you see coding tools, document editors, communication apps, "
-                    "or entertainment sites, mention how they relate to the KPIs. "
-                    "Keep your response concise (50-100 words) and directly relevant to work performance. "
-                    "Format as plain text with no special formatting or bullet points."
-                )
-            },
-            {
-                "type": "image_url", 
-                "image_url": {"url": image_url}
-            }
-        ]
 
-        # Use Groq client directly
-        completion = groq_client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are analyzing a work session screenshot for performance metrics to detect the activity of the user and tools used."
-                },
-                {
-                    "role": "user",
-                    "content": message_content
-                }
-            ],
-            temperature=0.4,
-            max_completion_tokens=250,
-            top_p=1,
-            stream=False,
-            stop=None
+        # Download image for Gemini
+        img_response = requests.get(image_url)
+        if img_response.status_code != 200:
+            return "[Image analysis failed: Could not download image]"
+        
+        image_data = {
+            'mime_type': 'image/png', # Standardizing to png
+            'data': img_response.content
+        }
+        
+        prompt = (
+            "Analyze this screenshot to determine the user's current work activity and focus level. "
+            f"Evaluate against these KPIs: {kpi_list}.\n\n"
+            
+            "ANALYSIS REQUIREMENTS:\n"
+            "1. Application Identification: List all visible applications, IDEs, browsers, and their specific content\n"
+            "2. Activity Detection: Determine the primary task (coding, debugging, documentation, communication, browsing, etc.)\n"
+            "3. Focus Assessment: Evaluate work relevance and concentration level based on visible content\n"
+            "4. Evidence: Reference specific UI elements, text, code snippets, or tab titles visible in the screenshot\n\n"
+            
+            "GOOD EXAMPLES:\n"
+            "Example 1: 'VS Code displaying Python file (auth_service.py) with OAuth implementation code visible. "
+            "Terminal shows pytest running unit tests. Chrome has Stack Overflow tab open about Python decorators. "
+            "High productivity - actively developing authentication feature with research support.'\n\n"
+            
+            "Example 2: 'Figma design tool active showing mobile app mockups labeled \"Dashboard v2\". "
+            "Slack window visible with #design-review channel. Notion tab contains sprint planning notes. "
+            "Moderate-high focus - UI/UX design work with team collaboration.'\n\n"
+            
+            "BAD EXAMPLES:\n"
+            "Example 1: 'The user is working on a computer.' "
+            "[TOO VAGUE - no specific applications, activities, or evidence identified]\n\n"
+            
+            "Example 2: 'User has multiple tabs open and seems busy.' "
+            "[LACKS DETAIL - doesn't specify what tabs, what work, or provide objective evidence]\n\n"
+            
+            "OUTPUT FORMAT:\n"
+            "Provide a 50-80 word analysis that:\n"
+            "- Names specific applications and their visible content\n"
+            "- Identifies the concrete task being performed\n"
+            "- Assesses focus/productivity with evidence\n"
+            "- Maps findings to relevant KPIs\n"
+            "- Uses objective, factual language (avoid assumptions)"
         )
 
-        return completion.choices[0].message.content.strip() if completion.choices[0].message.content else "No analysis returned."
+        response = await vision_model.generate_content_async([prompt, image_data])
+        return response.text.strip() if response.text else "No analysis returned."
 
     except Exception as e:
-        # Enhanced error logging with more context
-        error_msg = str(e)
-        if "invalid image data" in error_msg.lower():
-            logging.error(f"Groq API rejected image data from URL: {image_url}. Error: {e}")
-            return "[Image analysis failed: Invalid image format or corrupted image data]"
-        elif "400" in error_msg:
-            logging.error(f"Bad request to Groq API with image URL: {image_url}. Error: {e}")
-            return "[Image analysis failed: Bad request to vision API]"
-        else:
-            logging.error(f"Unexpected error analyzing image {image_url}: {e}")
-            return f"[Image analysis failed: {str(e)}]"
+        logging.error(f"Gemini Vision error for {image_url}: {e}")
+        return f"[Image analysis failed: {str(e)}]"
 
 async def process_image_and_store_task(
     user_id: UUID,
@@ -594,116 +593,101 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
             logging.info(f"Input Data - Activities: {len(all_activities)} items, Tasks: {len(recent_completed_tasks)} items")
             
             user_content = f"""
-            Team Member: {user.first_name} {user.last_name}
-            Workroom: {workroom.name}
-            Session Date: {session_obj.start_time.date() if session_obj.start_time else 'Today'}
+            Hey {user.first_name}! You're {user.first_name}'s personal performance analyst. Your job is to review their work session 
+            and give them genuinely useful insights—not corporate fluff.
 
-            Below are the performance metrics for this workroom with their importance weights:
-            {kpi_metrics_json}
+            SESSION DATA:
+            - **Workroom**: {workroom.name}
+            - **Workroom's KPI Metrics & Weights**: {kpi_metrics_json}
+            - **Detected Activities**: {all_activities_json}
+            - **Completed Tasks (last 6 hours)**: {recent_tasks_json}
 
-            Here are the detected activities from {user.first_name}'s session:
-            {all_activities_json}
+            ANALYSIS APPROACH:
+            1. **Match Tasks to Activities**: Look for evidence that completed tasks actually happened. 
+            If they claimed "Fixed React bug" but you only see Spotify and Twitter—call it out (diplomatically).
 
-            Here are the tasks {user.first_name} completed in the last 6 hours within this workroom:
-            {recent_tasks_json}
+            2. **Tool-Task Correlation**: Check if the tools they used align with their tasks. 
+            Example: "Built API endpoint" should show IDE/terminal activity, not just Slack.
 
-            Your analysis task:
-            1. Evaluate {user.first_name}'s performance by analyzing:
-            - How well their detected activities align with the specified KPIs
-            - Whether they used the tools specified in their completed tasks (task_tools)
-            - The correlation between their activities and the tasks they completed
-            - Quality of work based on KPI alignment and task completion patterns
-            
-            2. Write a structured summary with the following format for frontend display:
-            - Start with "**Insights**" as a header
-            - Use bullet points (•) for key insights
-            - Include a "**Recommendations**" section with actionable suggestions
-            - Keep insights concise and specific to observed activities and KPI alignment
-            - Format for easy reading with proper spacing and structure
-            
-            3. For each KPI, provide an alignment percentage (0-100) considering:
-            - Time spent on KPI-related activities
-            - Usage of tools specified in completed tasks
-            - Quality of engagement with task-related work
-            - Weight/importance of each KPI
-            - Evidence from both activities and completed task patterns
+            3. **KPI Story**: Explain the "why" behind the numbers. High Focus + Low Productivity might mean 
+            they're deep in research. High Collaboration + Low Focus could be meeting overload.
 
-            Return a JSON object with this exact structure:
+            4. **Smart Recommendations**: Give specific, actionable advice based on patterns you notice. 
+            Skip the motivational poster quotes.
+
+            GOOD EXAMPLES:
+
+            Example 1 - Insights:
+            "• Strong correlation detected: VS Code activity (Python files) aligns perfectly with completed 
+            task 'Database migration script'. Terminal shows multiple git commits during this window.
+            - {workroom.name} tools used effectively—Notion for planning, Figma for quick UI reference.
+            - Focus score high (92%) but Productivity moderate (68%)—likely due to extended debugging session 
+            visible in Chrome DevTools."
+
+            Example 1 - Recommendations:
+            "• Consider time-boxing debugging sessions to maintain productivity momentum.
+            - Great use of Notion for documentation—maybe add a 'blockers' section to track recurring issues."
+
+            Example 2 - Insights:
+            "• Task claimed: 'Completed marketing slides' but screenshot analysis shows 6 different tools 
+            active simultaneously (Slack, Gmail, Canva, Spotify, Twitter, Calendar). Possible context-switching overhead.
+            - Collaboration score elevated (85%) due to active Slack conversations, but may be impacting deep work time."
+
+            Example 2 - Recommendations:
+            "• Try batching communication—dedicate specific time blocks for Slack/email to protect focus time.
+            - Your multi-tool workflow suggests async work might help. Consider 'Do Not Disturb' mode for creative tasks."
+
+            BAD EXAMPLES:
+
+            Example 1:
+            "• User was productive today.
+            - Keep up the good work!
+            - Tasks completed successfully."
+            [WHY IT'S BAD: Zero specifics, no tool analysis, generic cheerleading, no actionable insights]
+
+            Example 2:
+            "• Low productivity detected. User needs to focus more.
+            - Too many distractions observed.
+            - Recommend better time management."
+            [WHY IT'S BAD: Judgmental tone, vague observations, no evidence cited, unhelpful recommendations]
+
+            OUTPUT REQUIREMENTS:
+            - **Tone**: Friendly but professional. Like a helpful colleague, not a corporate bot.
+            - **Evidence-Based**: Reference specific tools, tasks, and patterns from the data.
+            - **Balanced**: Acknowledge what's working AND what could improve.
+            - **Actionable**: Every recommendation should be something they can actually do.
+            - **Concise**: 3-4 insights max, 2-3 recommendations max.
+
+            Return this exact JSON structure:
             {{
-                "summary_text": "**Insights**\\n\\n• [Specific insight about KPI alignment and activity patterns]\\n• [Evidence of tool usage and task completion effectiveness]\\n• [Quality assessment based on observed behaviors]\\n• [Performance consistency or notable patterns]\\n\\n**Recommendations**\\n\\n• [Specific actionable recommendation based on analysis]\\n• [Suggestion for improving KPI alignment or workflow]\\n• [Tool usage or collaboration improvements if applicable]",
+                "summary_text": "**📊 Session Insights**\\n\\n• [Specific insight with evidence]\\n• [Pattern observation with data]\\n• [KPI interpretation with context]\\n\\n**💡 Recommendations**\\n\\n• [Actionable step with rationale]\\n• [Specific improvement suggestion]",
                 "kpi_breakdown": [
-                    {{
-                        "kpi_name": "KPI Name",
-                        "percentage": 85.0
-                    }},
-                    ...
+                    {{"kpi_name": "KPI Name", "percentage": 95.5}}
                 ]
             }}
-
-            Important:
-            - Format summary_text for direct frontend rendering with proper markdown
-            - Use bullet points (•) not dashes (-)
-            - Include clear section headers with **bold** formatting
-            - Keep insights data-driven and specific to observed activities
-            - Base analysis on both screen activities AND completed tasks with their tools
-            - Reward alignment between task tools and detected activities
-            - Consider task completion timing and KPI relevance
-            - Only return valid JSON with properly escaped formatting
-            - Include all KPIs in the breakdown
-            - Percentages should be floats
+            Remember: Be honest but constructive. The goal is to help {user.first_name} work smarter, not just harder.
             """
             
-            # Use Groq client directly
-            completion = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an AI performance analyst evaluating a team member's work session. Respond like you are accesssing and advising the team member"
-                    },
-                    {
-                        "role": "user",
-                        "content": user_content
-                    }
-                ],
-                temperature=0.3,
-                max_completion_tokens=800,
-                top_p=1,
-                stream=False,
-                stop=None
+            response = await summary_model.generate_content_async(
+                user_content,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.3,
+                    response_mime_type="application/json"
+                )
             )
             
-            # Parse JSON response
-            response_text = completion.choices[0].message.content.strip()
+            parsed_data = json.loads(response.text)
             
-            # Try to extract JSON from the response
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                try:
-                    parsed_data = json.loads(json_str)
-                    
-                    # Create UserDailyKPIReport from parsed data
-                    if "summary_text" in parsed_data and "kpi_breakdown" in parsed_data:
-                        kpi_breakdown = [
-                            {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
-                            for item in parsed_data["kpi_breakdown"]
-                        ]
-                        summary_data = UserDailyKPIReport(
-                            summary_text=parsed_data["summary_text"],
-                            kpi_breakdown=kpi_breakdown
-                        )
-                    else:
-                        raise ValueError("Missing required fields in LLM response")
-                except (json.JSONDecodeError, ValueError, KeyError) as parse_error:
-                    logging.warning(f"Failed to parse LLM JSON response: {parse_error}. Raw response: {response_text}")
-                    summary_data = fallback_response
-            else:
-                logging.warning(f"No JSON found in LLM response: {response_text}")
-                summary_data = fallback_response
-                
+            kpi_breakdown = [
+                {"kpi_name": item["kpi_name"], "percentage": float(item["percentage"])}
+                for item in parsed_data["kpi_breakdown"]
+            ]
+            summary_data = UserDailyKPIReport(
+                summary_text=parsed_data["summary_text"],
+                kpi_breakdown=kpi_breakdown
+            )
         except Exception as e:
-            logging.warning(f"LLM call failed: {str(e)}")
+            logging.warning(f"Gemini summary generation failed: {str(e)}")
             summary_data = fallback_response
             
     # Calculate overall alignment percentage (weighted average)
@@ -861,75 +845,175 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         logging.info(f"Generating Workroom Overview for {workroom.name}. Average Alignment: {average_alignment:.2f}%")
         
         user_content = f"""
-        Below are the relevant summaries from today:
+        You're generating an executive summary for the {workroom.name} project manager. Your goal: give them 
+        a clear, actionable snapshot of team performance without making them dig through data.
 
-        Current User Summary:
+        📊 TODAY'S DATA:
+
+        **Current User Summary:**
         {texts_for_llm[0]}
 
-        {"Existing Team Summary:" + texts_for_llm[1] if len(texts_for_llm) > 1 else ""}
+        {"**Existing Team Summary:**\n" + texts_for_llm[1] if len(texts_for_llm) > 1 else ""}
 
-        Key Metrics:
-        - Overall Alignment: {round(average_alignment, 2)}%
-
+        **Key Metrics:**
+        - Overall Team Alignment: {round(average_alignment, 2)}%
         - KPI Breakdown: {kpi_breakdown_json}
 
-        Generate a structured executive summary formatted for frontend display with the following structure:
+        ANALYSIS GUIDELINES:
+
+        1. **Connect the Dots**: Look for patterns across team members. Are multiple people blocked on the same thing? 
+        Is collaboration strong or are people working in silos?
+
+        2. **Be Specific**: Instead of "team is productive," say "3 engineers shipped features ahead of schedule; 
+        2 designers completed 4 mockup iterations based on stakeholder feedback."
+
+        3. **Context Matters**: A 65% alignment score might be great for a research-heavy day but concerning 
+        for a sprint deadline. Explain the "why" behind the numbers.
+
+        4. **Name Names Strategically**: Highlight standout performers and those who might need support, 
+        but keep it constructive, not callout culture.
+
+        5. **Actionable Over Observational**: Every insight should lead to a clear next step for the manager.
+
+        GOOD EXAMPLES:
+
+        Example 1 - Team Performance Summary:
+        "• Team achieved 78% overall alignment today—strong showing during feature freeze period.
+        - 4 out of 6 engineers maintained high focus (85%+) while resolving critical bugs in the payment module.
+        - Cross-functional collaboration evident: design and frontend teams synced 3x via Figma comments and Slack, 
+        reducing back-and-forth on the checkout UI."
+
+        Example 1 - Key Strengths:
+        "• Sarah (backend) shipped the API retry logic ahead of schedule with comprehensive test coverage—terminal 
+        logs show 47 commits and successful CI/CD pipeline runs.
+        - Documentation velocity up 40%—team actively using Notion to capture decisions during standups.
+        - Zero context-switching waste detected during core working hours (10am-2pm), indicating effective meeting scheduling."
+
+        Example 1 - Areas for Improvement:
+        "• Two team members (Alex, Jordan) show low task-to-activity correlation (45%)—claimed tasks don't match 
+        detected tool usage. May indicate unclear requirements or blockers not being communicated.
+        - Collaboration score dropped to 52% after 3pm—suggests asynchronous handoffs aren't happening smoothly 
+        between time zones.
+        - Design team's Figma activity peaks during development team's focus time, creating potential review bottlenecks."
+
+        Example 1 - Recommendations for Tomorrow:
+        "• Quick 15-min check-in with Alex and Jordan to identify blockers—low correlation often signals stuck work.
+        - Consider shifting design reviews to morning standup to align with dev team's active hours.
+        - Dedicate first hour tomorrow to async updates in Slack #progress channel to boost afternoon alignment."
+
+        Example 2 - Team Performance Summary:
+        "• 82% alignment across the team—excellent coordination during the product demo prep week.
+        - All 5 team members actively contributed to the presentation deck (Google Slides), showing strong collaborative ownership.
+        - High focus detected (avg 88%) but productivity variance is wide (48%-91%), suggesting uneven workload distribution."
+
+        Example 2 - Recommendations for Tomorrow:
+        "• Rebalance task distribution—Mike and Lisa are at 91% productivity while others hover around 50-60%. 
+        Check if they're over-allocated or if others need clearer priorities.
+        - Lock down 2-4pm as 'no meetings' to protect deep work time—current calendar shows 6 team meetings scattered throughout the day.
+        - Set up a quick knowledge transfer session—Mike's terminal activity suggests he's the only one who knows the deployment process."
+
+        BAD EXAMPLES:
+
+        Example 1:
+        "**Team Performance Summary**
+        - The team worked hard today.
+        - Overall performance was good.
+        - Everyone was busy with their tasks.
+
+        **Key Strengths**
+        - Team members are dedicated.
+        - Good collaboration observed.
+
+        **Areas for Improvement**
+        - Some people could be more productive.
+        - Communication needs improvement.
+
+        **Recommendations for Tomorrow**
+        - Keep up the good work.
+        - Try to improve focus.
+        - Communicate better."
+
+        [WHY IT'S BAD: Zero specifics, no data cited, generic observations, no actionable insights, no names, 
+        no tool/task correlation, sounds like a fortune cookie—completely useless for a manager]
+
+        Example 2:
+        "**Team Performance Summary**
+        - Alignment was 78%.
+        - People used computers today.
+        - Tasks were completed.
+
+        **Key Strengths**
+        - Sarah did well.
+
+        **Areas for Improvement**
+        - Alex needs to focus more and stop being distracted.
+        - Jordan is underperforming and should work harder.
+
+        **Recommendations for Tomorrow**
+        - Everyone should be more productive.
+        - Fix the problems mentioned above."
+
+        [WHY IT'S BAD: Fails to contextualize numbers, no evidence for claims, overly harsh/judgmental tone 
+        without constructive framing, vague recommendations, doesn't help manager understand root causes or take action]
+
+        OUTPUT REQUIREMENTS:
+
+        **Structure**: Use this exact markdown format:
 
         **Team Performance Summary**
 
-        • [Overall team performance insight with specific alignment percentage]
-        • [Key productivity patterns observed across team members]
-        • [Collaboration effectiveness and tool usage patterns]
+        - [Bullet point 1]
+        - [Bullet point 2]
+        - [Bullet point 3]
 
         **Key Strengths**
 
-        • [Specific strength with supporting data]
-        • [Notable individual contributions - mention names for exceptional performance]
-        • [Effective processes or high-performing areas]
+        - [Bullet point 1]
+        - [Bullet point 2]
+        - [Bullet point 3]
 
         **Areas for Improvement**
 
-        • [Specific improvement area with context]
-        • [Performance gaps or misalignment issues]
-        • [Resource or support needs identified]
+        - [Bullet point 1]
+        - [Bullet point 2]
+        - [Bullet point 3]
 
         **Recommendations for Tomorrow**
 
-        • [Actionable recommendation for team productivity]
-        • [Specific suggestions for underperforming areas]
-        • [Strategic focus areas based on today's insights]
+        - [Bullet point 1]
+        - [Bullet point 2]
+        - [Bullet point 3]
 
-        Format requirements:
-        - Use bullet points (•) for all list items
-        - Include **bold** section headers
-        - Write in professional but approachable tone for managers
-        - Focus on team-level insights with specific data points
-        - Mention individual names only for particularly notable performance (good or concerning)
-        - Keep each bullet point concise but informative
-        - Ensure proper markdown formatting for frontend rendering
+        **Tone & Style**:
+        - Professional but conversational—write like you're briefing a busy manager over coffee
+        - Data-driven but human—numbers need context and interpretation
+        - Constructive not critical—frame challenges as opportunities
+        - Specific not generic—cite tools, tasks, names, percentages, patterns
+
+        **Content Rules**:
+        - Every insight must reference specific data (percentages, tool names, task titles, team member names)
+        - Mention names for top performers (celebrate wins) and those who might need support (offer help)
+        - Each recommendation should be actionable within 24 hours
+        - Connect today's patterns to tomorrow's actions
+        - Avoid: vague praise, blame language, corporate jargon, anything a manager can't act on
+
+        **Length**: 3-4 bullet points per section (12-16 total). Each bullet should be 1-2 sentences max.
+
+        Remember: This manager has 10 minutes to read this before their next meeting. Make every word count.
         """
         
-        # Use Groq client directly
-        completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are analyzing daily performance summaries for a workroom team. Respond like you are writing a daily report to the Team Lead or Manager who wants to know how well the team performed today and how align they are to the team's KPI metrics"
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            temperature=0.5,
-            max_completion_tokens=500,
-            top_p=1,
-            stream=False,
-            stop=None
-        )
-        
-        generated_summary = completion.choices[0].message.content.strip()
+        generated_summary = ""
+        try:
+            response = await summary_model.generate_content_async(
+                user_content,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.5,
+                )
+            )
+            generated_summary = response.text.strip()
+        except Exception as ai_err:
+            logging.error(f"Gemini workroom summary failed: {ai_err}")
+            generated_summary = fallback_summary
         
     except Exception as e:
         logging.error(f"LLM summary generation failed: {e}")

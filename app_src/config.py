@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     CLOUDINARY_CLOUD_NAME : str
     CLOUDINARY_API_KEY : str
     CLOUDINARY_API_SECRET : str
-    GROQ_API_KEY: str
+    GEMINI_API_KEY: str
     DG_API_KEY: str
     DOMAIN: str
     HUDDDLE_LINK: str
