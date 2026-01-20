@@ -20,6 +20,7 @@ from app_src.config import Config
 import google.generativeai as genai
 from datetime import datetime, timezone, timedelta
 from .schema import UserDailyKPIReport
+from typing import List
 
 
 GEMINI_API_KEY = Config.GEMINI_API_KEY
