@@ -28,8 +28,8 @@ if not GEMINI_API_KEY:
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Use Gemini 1.5 models
-vision_model = genai.GenerativeModel('gemini-1.5-flash')
-summary_model = genai.GenerativeModel('gemini-1.5-pro')
+vision_model = genai.GenerativeModel('gemini-2.5-flash')
+summary_model = genai.GenerativeModel('gemini-2.5-flash')
 
 # Cloudinary Configuration
 cloudinary.config(
