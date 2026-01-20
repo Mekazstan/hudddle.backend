@@ -8,7 +8,7 @@ google-auth-oauthlib
 google-auth-httplib2
 fastapi-mail
 resend
-google-generativeai
+google-genai
 fastapi[standard]
 fastapi[websockets]
 itsdangerous

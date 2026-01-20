@@ -17,7 +17,8 @@ import cloudinary.uploader
 import cloudinary.api
 import time
 from app_src.config import Config
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from datetime import datetime, timezone, timedelta
 from .schema import UserDailyKPIReport
 from typing import List
@@ -26,11 +27,10 @@ from typing import List
 GEMINI_API_KEY = Config.GEMINI_API_KEY
 if not GEMINI_API_KEY:
     logging.error("GEMINI_API_KEY is not set in the environment variables.")
-genai.configure(api_key=GEMINI_API_KEY)
 
-# Use Gemini 1.5 models
-vision_model = genai.GenerativeModel('gemini-2.5-flash')
-summary_model = genai.GenerativeModel('gemini-2.5-flash')
+# Initialize the new Google Gen AI Client
+genai_client = genai.Client(api_key=GEMINI_API_KEY)
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 # Cloudinary Configuration
 cloudinary.config(
@@ -378,11 +378,6 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
         if img_response.status_code != 200:
             return "[Image analysis failed: Could not download image]"
         
-        image_data = {
-            'mime_type': 'image/png', # Standardizing to png
-            'data': img_response.content
-        }
-        
         prompt = (
             "Analyze this screenshot to determine the user's current work activity and focus level. "
             f"Evaluate against these KPIs: {kpi_list}.\n\n"
@@ -418,7 +413,18 @@ async def analyze_image(image_url: str, kpi_names: set) -> str:
             "- Uses objective, factual language (avoid assumptions)"
         )
 
-        response = await vision_model.generate_content_async([prompt, image_data])
+        contents = [
+            types.Part.from_bytes(
+                data=img_response.content,
+                mime_type='image/png'
+            ),
+            prompt
+        ]
+        
+        response = await genai_client.aio.models.generate_content(
+            model=DEFAULT_MODEL,
+            contents=contents
+        )
         return response.text.strip() if response.text else "No analysis returned."
 
     except Exception as e:
@@ -669,9 +675,10 @@ async def generate_user_session_summary(workroom_id: UUID, session_id: UUID, use
             Remember: Be honest but constructive. The goal is to help {user.first_name} work smarter, not just harder.
             """
             
-            response = await summary_model.generate_content_async(
-                user_content,
-                generation_config=genai.types.GenerationConfig(
+            response = await genai_client.aio.models.generate_content(
+                model=DEFAULT_MODEL,
+                contents=user_content,
+                config=types.GenerateContentConfig(
                     temperature=0.3,
                     response_mime_type="application/json"
                 )
@@ -1007,9 +1014,10 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         
         generated_summary = ""
         try:
-            response = await summary_model.generate_content_async(
-                user_content,
-                generation_config=genai.types.GenerationConfig(
+            response = await genai_client.aio.models.generate_content(
+                model=DEFAULT_MODEL,
+                contents=user_content,
+                config=types.GenerateContentConfig(
                     temperature=0.5,
                 )
             )
