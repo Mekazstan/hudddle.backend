@@ -842,6 +842,8 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         # Create the prompt content
         kpi_breakdown_json = json.dumps(averaged_kpi_breakdown, indent=2)
         
+        existing_team_summary = f"**Existing Team Summary:**\n{texts_for_llm[1]}" if len(texts_for_llm) > 1 else ""
+        
         logging.info(f"Generating Workroom Overview for {workroom.name}. Average Alignment: {average_alignment:.2f}%")
         
         user_content = f"""
@@ -853,7 +855,7 @@ async def calculate_workroom_kpi_overview(workroom_id: UUID, user_id: UUID, sess
         **Current User Summary:**
         {texts_for_llm[0]}
 
-        {"**Existing Team Summary:**\n" + texts_for_llm[1] if len(texts_for_llm) > 1 else ""}
+        {existing_team_summary}
 
         **Key Metrics:**
         - Overall Team Alignment: {round(average_alignment, 2)}%
